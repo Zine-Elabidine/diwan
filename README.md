@@ -3,7 +3,7 @@
 My own agent runtime, built from the loop up: no framework underneath, every
 layer written and understood by hand.
 
-**Status:** kickoff. Reading existing runtimes before designing anything.
+**Status:** study phase done (see `docs/notes/`, `docs/comparison.md`); choosing a direction.
 
 ## Layout
 
