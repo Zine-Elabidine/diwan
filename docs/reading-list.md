@@ -1,6 +1,6 @@
 # Reading list
 
-Fourteen runtimes, cloned shallow into `refs/` on 2026-09-26. Read in tiers:
+Twenty-two runtimes, cloned shallow into `refs/` on 2026-09-26. Read in tiers:
 the small ones first, so the big ones read as "the same loop plus X".
 
 For each one, answer the same questions (notes go in `docs/notes/<name>.md`):
@@ -42,9 +42,27 @@ For each one, answer the same questions (notes go in `docs/notes/<name>.md`):
 | codex | Rust | 75a7148 | `codex-rs/core/src/session/turn.rs`, `compact.rs`, `exec_policy.rs`, sandboxing |
 | goose | Rust | 04ed836 | `crates/goose/src/agents/agent.rs`, `crates/goose-context-management` |
 
+## Tier 4: the 2026 wave
+
+Newer runtimes, read after tiers 1-3 so their ideas stand out against the baseline.
+
+| Repo | Lang | Commit | Start here |
+|---|---|---|---|
+| deepseek-harness | TS | 477b4f4 | `packages/core/agent-loop`, then `packages/compaction`, `packages/sandbox`: everything is a plugin, even the loop |
+| hermes-agent | Py | 959c764 | `run_agent.py`, then `agent/context_*` and memory: an agent that learns how you work |
+| openclaw | TS | d9fc255 | `src/agents`, `src/context-engine`, `src/channels`: a personal agent reached through chat apps |
+| trueforge | TS | 7ab8b61 | `packages/trueforge/src/runtime`: a server-side loop with approvals and resumable sessions |
+| qm | TS | 8adee4b | `src/harness/`: a harness *over* harnesses (Claude, Codex, opencode, pi); see `harness-router.ts`, `tape-*.ts` |
+| crush | Go | 68d768c | `internal/agent/agent.go`: the loop in Go, plus `permission/`, `history/` |
+| dirac | TS | 46d33ad | `src/core/context`: context curation, the reason it tops TerminalBench |
+| microsoft-agent-framework | Py | 6f1522a | `python/packages/core/agent_framework/_agents.py`, `_compaction.py`, `_harness/` |
+
+Also newer: the **Strands Harness** (AWS, 2026-09-21) lives in the `strands-agents`
+clone under `harness-py/` and `harness-ts/`.
+
 ## Themes to compare across tiers
 
-- **Compaction:** opencode `compaction.ts`, codex `compact*.rs`, goose `goose-context-management`, openhands `context/`
+- **Compaction:** deepseek-harness `packages/compaction`, hermes `agent/context_compressor.py`, opencode `compaction.ts`, codex `compact*.rs`, goose `goose-context-management`, openhands `context/`
 - **Sandboxing / exec policy:** codex `exec_policy*`, `bwrap`; openhands `workspace/`
 - **Undo / revert:** opencode `revert.ts`, aider git integration
 - **Durability / resume:** langgraph checkpoints, pi-mono `durable`, openhands `conversation/`

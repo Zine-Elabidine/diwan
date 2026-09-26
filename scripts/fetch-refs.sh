@@ -21,5 +21,13 @@ opencode             sst/opencode
 gemini-cli           google-gemini/gemini-cli
 codex                openai/codex
 goose                block/goose
+deepseek-harness     deepseek-ai/deepseek-harness
+hermes-agent         NousResearch/hermes-agent
+openclaw             openclaw/openclaw
+trueforge            truefoundry/trueforge
+qm                   yc-software/qm
+crush                charmbracelet/crush
+dirac                dirac-run/dirac
+microsoft-agent-framework microsoft/agent-framework
 LIST
 wait

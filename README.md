@@ -10,5 +10,5 @@ layer written and understood by hand.
 ```
 docs/reading-list.md   what to read in each reference runtime, and in what order
 scripts/fetch-refs.sh  clone the reference runtimes into refs/ (gitignored)
-refs/                  14 open-source runtimes, read-only, never committed
+refs/                  22 open-source runtimes, read-only, never committed
 ```
