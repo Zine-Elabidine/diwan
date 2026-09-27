@@ -1,5 +1,11 @@
 # Design decisions for a harness
 
+**Name (✅ locked 2026-09-27): Diwan.** The register where everything is written and nothing erased
+(the tree-shaped log), and a word that crossed every language (the provider library). Family:
+the provider library gets a related name (TBD); **Tosk** (from Ratatoskr, the squirrel carrying
+messages along the World Tree) is reserved for the messaging gateway between you and your agents
+(phone, Telegram, approvals, job reports).
+
 Every harness answers the same questions. These are the ones where the runtimes we studied
 **actually diverge in code**, with the file that shows each answer. The last column of each
 table, "Lean", is a first proposal; the choice is ours to make.
