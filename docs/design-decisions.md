@@ -286,6 +286,8 @@ command + skill → gated tool → plugin → MCP → new core tool (last resort
 
 **Lean:** v3 material. The frozen-snapshot rule matters from day one because it protects caching.
 
+**Direction (2026-09-27):** memory is built on **Telepathy bundles**, first-class (github.com/Zine-Elabidine/telepathy). Diwan reads the same store natively: per-machine bundle choices, a sectioned index loaded as a frozen snapshot at session start, and new memories routed to the right bundle. Not locked yet; decide the details when we reach #13.
+
 ---
 
 ## 14. Library, or engine behind a protocol?
