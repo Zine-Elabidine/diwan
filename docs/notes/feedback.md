@@ -100,7 +100,7 @@ Threads: ["DSH is insanely good" (235 pts, 167 comments)](https://www.reddit.com
 
 **Takeaways for us**
 1. An interactive terminal UI in v0, usable over SSH. The biggest gap DSH leaves.
-2. Fast startup: lazy imports; `cambium --help` must be instant.
+2. Fast startup: lazy imports; `--help` must be instant.
 3. Real isolation by default, **reads included** (bwrap/Landlock or a container), not a prompt rule.
 4. Cache discipline and compaction that reliably fire are what users notice.
 5. Free defaults: no built-in tool that silently bills a paid API.
