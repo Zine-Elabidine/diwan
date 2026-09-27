@@ -299,7 +299,15 @@ ACP) a thin client.
 - **Models:** one vendor (Codex, Claude Code) or any (dsh ~40 providers, Hermes, LangChain).
   Feedback says users want one surface across models.
 
-**Lean:** Python (your strongest language, and the eval / RL work lives there); any model.
+**✅ LOCKED (2026-09-27): Python, for both the runtime and the provider library.**
+- Why: his strongest language; the loop is I/O-bound; eval/RL work plugs in; Hermes, aider and
+  OpenHands show Python doesn't block adoption.
+- Codex's Rust reasons (no Node install, OS sandbox bindings, ms startup for CI fan-out, a wire
+  protocol) are product-at-scale reasons; we cover install with uv and the protocol with #14.
+- Hedge: everything crossing a boundary is language-neutral (JSONL log, JSON-RPC, JSON-able
+  types), so any component can be ported later without a redesign.
+- Distribution: PyPI + `uv tool install`, plus a short Hermes-style `install.sh` (pinned uv with
+  a SHA-256 check, then `uv tool install`). Goal: open source, public adoption.
 
 ---
 
