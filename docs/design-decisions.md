@@ -2,9 +2,7 @@
 
 **Name (✅ locked 2026-09-27): Diwan.** The register where everything is written and nothing erased
 (the tree-shaped log), and a word that crossed every language (the provider library). Family:
-the provider library is **Tarjuman** (ترجمان, the interpreter who made every language understood; repo `Zine-Elabidine/tarjuman`); **Tosk** (from Ratatoskr, the squirrel carrying
-messages along the World Tree) is reserved for the messaging gateway between you and your agents
-(phone, Telegram, approvals, job reports).
+the provider library is **Tarjuman** (ترجمان, the interpreter who made every language understood; repo `Zine-Elabidine/tarjuman`).
 
 Every harness answers the same questions. These are the ones where the runtimes we studied
 **actually diverge in code**, with the file that shows each answer. The last column of each
