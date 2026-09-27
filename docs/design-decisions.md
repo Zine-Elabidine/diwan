@@ -52,7 +52,23 @@ signatures and encrypted reasoning don't map across vendors, so switching models
 mid-session breaks or silently drops data. dsh's `replayState` is the clean answer: keep
 what the original provider needs, opaque to everyone else.
 
-**Lean:** own neutral blocks + per-message provider/model + opaque replay state.
+**✅ LOCKED (2026-09-27): own neutral format + own provider library, as a separate project.**
+- Requirements: switch LLM between turns (a session never locks a model); support all providers.
+- Neutral content blocks (`text`, `reasoning`, `image`, `tool_call` with raw args, `tool_result`);
+  each assistant message records `provider`, `model`, `usage` and an opaque `replay` envelope
+  (response-level + per-block), only read by the same provider+protocol+model.
+- Model switch rules (from pi-ai `transform-messages.ts`): foreign reasoning → text, encrypted
+  reasoning dropped, tool-call ids normalised per target, images → placeholder without vision,
+  errored/aborted turns skipped, orphaned tool calls get a synthetic error result.
+  A switch is logged as a `model/switch` event.
+- Protocol / provider / model kept separate; provider quirks stored **as data** (compat table);
+  catalog generated from models.dev + our overrides.
+- Translators written by us: OpenAI Chat Completions + Anthropic Messages first; Gemini and
+  OpenAI Responses later. No litellm core dependency (lossy OpenAI-shaped format, size,
+  March 2026 PyPI compromise); a litellm-backed adapter stays possible for the long tail.
+- **Lives in its own repo** and knows nothing about the runtime: messages + tools in, a stream of
+  neutral events out. The runtime depends on it as a versioned package.
+- References: `notes/llm-layer-dsh.md`, pi-ai `src/api/*`, `src/types.ts` (compat interfaces).
 
 ---
 
