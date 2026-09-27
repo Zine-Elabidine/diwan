@@ -2,7 +2,7 @@
 
 **Name (✅ locked 2026-09-27): Diwan.** The register where everything is written and nothing erased
 (the tree-shaped log), and a word that crossed every language (the provider library). Family:
-the provider library gets a related name (TBD); **Tosk** (from Ratatoskr, the squirrel carrying
+the provider library is **Tarjuman** (ترجمان, the interpreter who made every language understood; repo `Zine-Elabidine/tarjuman`); **Tosk** (from Ratatoskr, the squirrel carrying
 messages along the World Tree) is reserved for the messaging gateway between you and your agents
 (phone, Telegram, approvals, job reports).
 
@@ -72,7 +72,7 @@ what the original provider needs, opaque to everyone else.
 - Translators written by us: OpenAI Chat Completions + Anthropic Messages first; Gemini and
   OpenAI Responses later. No litellm core dependency (lossy OpenAI-shaped format, size,
   March 2026 PyPI compromise); a litellm-backed adapter stays possible for the long tail.
-- **Lives in its own repo** and knows nothing about the runtime: messages + tools in, a stream of
+- **Lives in its own repo, `tarjuman`,** and knows nothing about the runtime: messages + tools in, a stream of
   neutral events out. The runtime depends on it as a versioned package.
 - References: `notes/llm-layer-dsh.md`, pi-ai `src/api/*`, `src/types.ts` (compat interfaces).
 
