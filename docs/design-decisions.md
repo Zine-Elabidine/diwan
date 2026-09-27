@@ -25,7 +25,17 @@ An event log keeps everything (compaction becomes a *view*, not a deletion), and
 replay come free, at the cost of writing a projection (log → messages). Checkpoints
 give time travel for any state, not just messages, but store full snapshots.
 
-**Lean:** append-only event log, context derived. It's the direction serious runtimes converged on.
+**✅ LOCKED (2026-09-27): append-only event log, tree-shaped.**
+- Every event has an `id` and a `parent`; the session keeps a `head` pointer to the current leaf.
+- The prompt is projected from the path root → `head`, never from all events in the file
+  (dead branches must not leak into context; enforced by a test).
+- Rewind = move `head`; the next event starts a branch. Fork = new session pointing into the old one.
+- Compaction is an event; originals are never deleted.
+- Storage: one JSONL file per session to start.
+- Why a tree over a line: branches (attempts side by side, rewinding a rewind), parallel
+  writers without ordering by file position, fork without copying. Cost: one field + a head
+  pointer + a projection that walks parents. (Codex's rollout is a line; Claude Code's
+  on-disk transcript, as observed from our own session files, is a `uuid`/`parentUuid` tree.)
 
 ---
 
