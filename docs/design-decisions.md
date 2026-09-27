@@ -287,7 +287,15 @@ command + skill → gated tool → plugin → MCP → new core tool (last resort
 A protocol costs a little upfront and makes every future surface (TUI, web, Telegram, IDE via
 ACP) a thin client.
 
-**Lean:** library core + a thin JSON-RPC/stdio server from v1.
+**✅ LOCKED (2026-09-27): library + terminal first, server in v1.**
+- v0: the Python library (the core) + an **interactive terminal CLI** usable over SSH + a
+  headless one-shot mode (`run "task" --json`) for scripts and CI.
+- v1: `serve`, JSON-RPC over stdio/socket; web, desktop, phone, editor (ACP) and Telegram
+  become thin clients.
+- Later: TUI polish (Textual); a single-file binary (e.g. PyApp) only if people ask.
+- Why: DeepSeek Harness shipped browser-first and its top Reddit complaint is "no CLI/TUI to
+  manage it via ssh" (112 upvotes). Every harness engineers keep (Pi, OpenCode, Codex, aider)
+  is terminal-first. Startup must be fast (lazy imports).
 
 ---
 
