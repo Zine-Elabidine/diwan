@@ -97,8 +97,15 @@ what the original provider needs, opaque to everyone else.
   fallback. Failed attempts: dsh logs them as `assistant/attempt`, *kept in the log but
   excluded from the model's history*.
 
-**Lean:** turn/step vocabulary; end on no-tool-calls; a budget object (steps, tokens,
-seconds, dollars) with a warning before the hard stop; a stop hook.
+**⏸ PROPOSED, not locked yet (2026-09-27), resume here:**
+- a) turn / step vocabulary, both logged as events.
+- b) A turn ends on: no tool calls; `max_tokens` (reason logged); a tool that concludes the turn.
+  A stop hook can refuse the end and inject a message; new user input keeps the turn going.
+- c) An optional budget object (steps, tokens, seconds, **dollars**), off by default; a warning to
+  the model at 80%, a hard stop at 100% with the reason logged.
+- d) Tarjuman maps errors to stable codes and carries each provider's retry policy; Diwan
+  executes retries (each logged before the wait, failed attempts hidden from the model);
+  context overflow → compaction then retry; provider fallback optional.
 
 ---
 
