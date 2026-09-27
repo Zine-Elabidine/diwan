@@ -64,3 +64,44 @@ Sources: Hacker News threads via the Algolia API, plus r/LocalLLaMA. Scores are 
    default (container, namespace), not prompt rules or security theatre.
 6. **Bloat is the common failure** of the big products: huge prompts, huge codebases,
    dozens of default skills.
+
+## DeepSeek Harness on Reddit (r/LocalLLaMA, Aug–Sep 2026)
+
+Threads: ["DSH is insanely good" (235 pts, 167 comments)](https://www.reddit.com/r/LocalLLaMA/comments/1vw10m3/),
+["it escaped from its workspace folder" (118, 157)](https://www.reddit.com/r/LocalLLaMA/comments/1vxi7gp/),
+["Opencode vs DSH" (21, 72)](https://www.reddit.com/r/LocalLLaMA/comments/1w53mwu/),
+["DSH vs OMP" (7, 28)](https://www.reddit.com/r/LocalLLaMA/comments/1whz401/).
+
+**Top complaint: no terminal interface.**
+- "I hate that there is still no CLI/TUI version of it to manage it via ssh" (**112 upvotes**, the thread's top comment)
+- "very clunky, CLI would be better" (36); "I prefer the terminal to yet another webui in my hundreds of tabs" (28)
+- "DSH is lacking cli which is important to me"; "leaning towards TUI harnesses and less chatty UIs"
+- The web UI only listens on localhost, so people use ssh tunnels or Tailscale to reach it remotely.
+
+**Other complaints**
+- Heavy: slow to boot ("slower than Gemini CLI"), RAM hog, too many npm deps; an install crash from a Node heap OOM (24 upvotes).
+- **The sandbox only confines writes**; reads anywhere are allowed, so the agent wandered through the user's
+  other files. Replies: "the workspace setting is a prompt-level convention, not an OS boundary";
+  "never trust an application's own sandbox"; people run agents as a separate OS user, in Docker, or with bwrap/landrun.
+- Prefix-cache misses on every turn at times; compaction "amazing when it works" but sometimes doesn't fire.
+- Loops that redo finished tasks; subagent timeouts; better one-shots than continuations.
+- The built-in web_search needs a DeepSeek API key and bills every search as model usage; no free search plugin.
+- English docs read like a rough translation.
+
+**What people love**
+- **Modify it by asking it**: "I got it to integrate with SimpleX by simply asking it to"; plugins are easy.
+- Progressive setup (no upfront config wall, unlike Hermes-style harnesses).
+- Any provider out of the box; several models at once (agent teams across GPUs and machines).
+- Tenacity ("a relentless harness that just keeps doing stuff") and good results with local Qwen 3.8.
+
+**Who uses what**
+- "DSH if you're a vibe coder. Pi or OMP or something you wrote yourself if you've got even the tiniest engineering bone."
+- Engineers keep landing on **Pi** (minimal, "nothing built in, so it can become anything"), OpenCode (TUI), or their own.
+
+**Takeaways for us**
+1. An interactive terminal UI in v0, usable over SSH. The biggest gap DSH leaves.
+2. Fast startup: lazy imports; `cambium --help` must be instant.
+3. Real isolation by default, **reads included** (bwrap/Landlock or a container), not a prompt rule.
+4. Cache discipline and compaction that reliably fire are what users notice.
+5. Free defaults: no built-in tool that silently bills a paid API.
+6. Progressive setup and "extend it by asking it" are loved; keep both in mind for extensions.
