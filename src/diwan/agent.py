@@ -3,6 +3,7 @@ plus the tools it asked for. Every step, tool result, retry and ending is logged
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -79,8 +80,19 @@ class Agent:
         self.limits = limits or Limits()
         self.sleep = sleep
         self.total = Usage()
+        self._stop = threading.Event()
+
+    def interrupt(self) -> None:
+        """Ask a running turn to stop (safe from any thread). It stops at the next event,
+        tool boundary or retry wait, keeping everything produced so far."""
+        self._stop.set()
+
+    def _check_stop(self) -> None:
+        if self._stop.is_set():
+            raise KeyboardInterrupt
 
     def turn(self, text: str) -> TurnEnded:
+        self._stop.clear()
         self.log.add_message(Message.user(text))
         steps, usage = 0, Usage()
         try:
@@ -115,12 +127,13 @@ class Agent:
                                                max_tokens=self.limits.max_tokens):
                     self.on(ev)
                     _collect(partial, ev)
+                    self._check_stop()
                     if isinstance(ev, Finish):
                         return ev.message
                 raise TarjumanError("SERVER_ERROR", "stream ended without a finish")
             except KeyboardInterrupt:
                 # keep what was streamed, flagged, so nothing is lost and the model sees where it stopped
-                kept = [b for b in partial if not isinstance(b, ToolCall)]
+                kept = [b for b in partial if not isinstance(b, ToolCall) and b.text]
                 if kept:
                     self.log.add_message(Message("assistant", kept, self.provider.provider,
                                                  self.model, None, "interrupted"))
@@ -134,11 +147,13 @@ class Agent:
                 wait = e.retry_after or min(2 ** attempt, 30)
                 self.on(Retrying(e, attempt, wait))
                 self.sleep(wait)
+                self._check_stop()
 
     def _run_tools(self, calls: list[ToolCall]) -> None:
         results: list[ToolResult] = []
         try:
             for call in calls:
+                self._check_stop()
                 results.append(self._run_one(call))
         finally:
             # results already produced are always saved, even on interrupt;

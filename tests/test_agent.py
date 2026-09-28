@@ -176,3 +176,15 @@ def test_ui_renders_markdown_tools_and_small_costs(tmp_path):
     assert "**" not in out and "My name is Diwan." in out
     assert "● bash  echo hi" in out and "⎿ hi" in out
     assert "$0.000069" in out and "session $0.000069" in out
+
+
+def test_interrupt_from_outside_keeps_partial_text(tmp_path):
+    a, log, _ = agent(tmp_path, [say("a long answer")])
+    a.on = lambda ev: a.interrupt()          # stop as soon as anything streams
+    ended = a.turn("x")
+    assert ended.reason == "interrupted"
+    assert [m.role for m in log.messages()] == ["user"]      # nothing streamed yet, nothing kept
+    b, log2, _ = agent(tmp_path, [call("bash", command="true"), say("never")])
+    b.on = lambda ev: b.interrupt() if isinstance(ev, TurnEnded) is False and type(ev).__name__ == "Finish" else None
+    assert b.turn("x").reason == "interrupted"
+    assert not [m for m in log2.messages() if m.role == "tool"]   # the tool never ran

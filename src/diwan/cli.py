@@ -61,6 +61,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="an OpenAI-compatible server instead of OpenRouter (vLLM, llama.cpp...)")
     ap.add_argument("-y", "--yes", action="store_true", help="approve every tool call")
     ap.add_argument("--think", action="store_true", help="show the model's reasoning")
+    ap.add_argument("--plain", action="store_true", help="simple line mode instead of the full-screen app")
     ap.add_argument("--version", action="version", version=f"diwan {__version__}")
     args = ap.parse_args(argv)
 
@@ -87,6 +88,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.prompt:
         ended = agent.turn(args.prompt)
         return 0 if ended.reason == "done" else 1
+
+    if not args.plain and sys.stdin.isatty() and sys.stdout.isatty():
+        from .tui import DiwanApp
+        model = args.model
+
+        def make_agent(new_log: Log) -> Agent:
+            return build_agent(model, new_log, term, cwd, args.base_url)
+
+        DiwanApp(make_agent, log, cwd, show_reasoning=args.think).run()
+        return 0
 
     try:
         import readline  # noqa: F401  line editing and history for input()
