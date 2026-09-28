@@ -84,3 +84,83 @@ Things nobody combines today:
 - Demystifying Multi-Agent Debate: https://arxiv.org/html/2601.19921v3
 - HeavySkill: https://arxiv.org/abs/2605.02396
 - Cursor best-of-N / judging: https://www.elegantsoftwaresolutions.com/blog/cursor-multi-agent-not-what-you-think
+
+---
+
+# What people want from their agents (X, Reddit, HN, 2026-09-28)
+
+Searched r/LocalLLaMA, r/ClaudeAI, X and HN for people who built their own harness and for
+what they wish existing ones did. Engagement is noted where it signals demand.
+
+## Recurring wants, strongest first
+
+1. **Parallel agents you can actually see and steer.** "I run many agents in parallel and lose
+   the picture of who spawned whom, which is working; agents finish or die quietly and I find out
+   half an hour later" (HN, live-map viewer). Andreas Kling (796 likes): design doc → coordinator
+   agent → workers on 4 machines over SSH, with **regular welfare checks** for stuck or
+   crash-looping workers; projects run for days. Murmell: parallel agents' branches collided.
+   → *Want: a live view of the tree of agents, health checks, per-agent isolation.*
+2. **Code decides, the model writes, and everything leaves a receipt.** The "Jev" harness posts
+   (650–980 likes, 2026-09-23..27): the model stops making the decisions; small deterministic code
+   picks the model tier, the next worker and keep/drop; state is **evidence, never a summary**.
+   Also a small fast model as a **fuzzy linter after every edit** (621 likes).
+   → *Want: a deterministic control plane around the model, and verification gates.*
+3. **The harness matters more than the model, so measure it.** TrueForge: same model, same 11/14
+   solved, **63% fewer tokens, ~27% cheaper** than Claude Managed Agents. "Same task, comparable
+   models, one harness passes clean, the other doesn't." llama-leash: "built to be measured rather
+   than believed", scoring the harness against the bare model on hidden tests.
+   → *Want: built-in evals and cost accounting per run.*
+4. **Verify gates, especially for small or local models.** A roles + verify gate harness lets 4B
+   and 12B models match a 35B one on agentic coding. TDD gates that re-derive their own evidence.
+   "Keeps working until tests pass, not until the chat says done."
+   → *Want: verification as a first-class step, not a prompt instruction.*
+5. **A work queue, not a chat.** "Tasks → agent works → tests → report back → next task; a junior
+   developer with a work queue." Cron agents that wake up, read a work ledger, and **post blocking
+   questions to a dashboard, then keep going with their best guess**; the human answers over
+   morning coffee and the next wake-up checks the answers.
+   → *Want: an async inbox of questions, background and scheduled runs.*
+6. **Continuity across sessions, models and harnesses.** "Software is continuous; Claude forgets
+   to update the todo list and CLAUDE.md" (186 upvotes, 113 comments). `lsa handoff 0 codex`
+   moves a conversation to another harness; Tutti shares context between Claude Code and Codex.
+   → *Want: memory that travels (Telepathy) and a portable session format.*
+7. **Local models without pain.** Forcefield, KoboldCpp Agent (159 upvotes), and a Qwen-built
+   harness (75 upvotes, 137 comments) all exist because Claude Code-style tools are hard to point
+   at local models: tool-call syntax failures, heavy prompts. One uses XML tool calls plus a small
+   classifier that catches malformed calls and nudges a retry.
+   → *Want: robust tool calling on weak models (Tarjuman's job).*
+8. **Safety that's one line.** "What sandbox are you all using?" (127 comments): people want
+   `sandbox agent --allowed-folder=X`. **Just-in-time code review before a tool call** is approved.
+9. **Context hygiene.** "Chats go dumb after 20–25 turns": keep tool outputs in *working memory*
+   that isn't saved to permanent history; every turn archived so you can `/restore`.
+10. **Other ideas worth stealing:** an agent that **forges its own tools** mid-task behind an
+    approval gate (6% → 61% on capability-gap tasks); personas that each keep a daily dashboard of
+    what they're good at; three-way chat (user + main agent + subagent in one thread); session
+    transcripts analysed for cost per shipped PR (Tuneloop).
+
+## The skeptic's view (also real)
+
+"Everyone wants to reinvent the wheel"; "Sounds like Hermes with extra steps"; "Can we stop with
+all the vibe-coded harnesses?" A new harness gets attention only with **one clear, measurable
+difference**, shown with numbers, not a feature list.
+
+## What this suggests for Diwan
+
+The council idea lines up with wants 1–4: provider-neutral councils, visible and steerable as a
+tree, with verification deciding the winner and every run measured (cost, tokens, did the panel
+change the outcome). Wants 5–6 (work queue, continuity) fit the event log and Telepathy.
+Lead with **one** measurable claim, e.g. "a council of cheap models + tests beats one frontier
+model on X at Y% of the cost", and publish the numbers.
+
+## Sources (community)
+- Andreas Kling's workflow: https://x.com/awesomekling/status/2102089363631059199
+- Jev harness posts: https://x.com/polydao/status/2104090661041369397 , https://x.com/Av1dlive/status/2102802621664985241
+- Fuzzy linter: https://x.com/MichaelThiessen/status/2103831653575544914
+- Live map of parallel agents: https://github.com/Latand/live-log-viewer-next
+- TrueForge harness comparison: https://www.reddit.com/r/LocalLLaMA/ (post "We built an open-source, model-neutral agent harness…", 2026-09-03)
+- llama-leash: https://github.com/vorlac/llama-leash
+- Work-queue / cron agents thread: https://www.reddit.com/r/LocalLLaMA/comments/1wilmnz/
+- Best local harness thread: https://www.reddit.com/r/LocalLLaMA/comments/1vukppf/
+- Sandbox thread: https://www.reddit.com/r/LocalLLaMA/comments/1vrps78/
+- "Looking for the right harness" (continuity): r/ClaudeAI, 2026-09-17
+- Artificium thread (skeptic replies): https://www.reddit.com/r/LocalLLaMA/comments/1wfmzez/
+- Forcefield: https://github.com/fabledruns/forcefield ; Tuneloop: https://github.com/tuneloop/tuneloop
