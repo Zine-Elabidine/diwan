@@ -13,9 +13,9 @@ approvals, retries, and a tree-shaped JSONL log of every session in `~/.diwan/se
 
 ```
 uv tool install -e ~/diwan          # once
-export OPENROUTER_API_KEY=...       # https://openrouter.ai/keys
+echo OPENROUTER_API_KEY=... > ~/.diwan/env && chmod 600 ~/.diwan/env   # or export it
 diwan                               # chat in the current folder
-diwan -m deepseek/deepseek-v4-flash # any OpenRouter model
+diwan -m z-ai/glm-5.3-flash         # any OpenRouter model (default: deepseek/deepseek-v4-flash)
 diwan -p "fix the failing test" -y  # one shot, approve everything
 diwan -r                            # resume the last session here
 diwan --base-url http://localhost:8000/v1 -m <model>   # local vLLM / llama.cpp

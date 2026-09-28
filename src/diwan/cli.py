@@ -17,7 +17,7 @@ from .log import Log
 from .prompt import system_prompt
 from .tools import Spec, make_tools
 
-DEFAULT_MODEL = "z-ai/glm-5.3-flash"
+DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
 DIM, RED, GREEN, CYAN, BOLD, RESET = "\033[2m", "\033[31m", "\033[32m", "\033[36m", "\033[1m", "\033[0m"
 CLEAR = "\r\033[K"
 
@@ -49,16 +49,22 @@ def fmt_usage(u: Usage) -> str:
     return " · ".join(parts)
 
 
+def short(text: str) -> str:
+    """Show paths relative to the project folder."""
+    cwd = str(Path.cwd())
+    return text.replace(cwd + "/", "").replace(cwd, ".")
+
+
 def summarize_call(call: ToolCall) -> str:
     try:
         a = call.args()
     except ValueError:
         return call.arguments[:80]
     if call.name == "bash":
-        return a.get("command", "")
+        return short(a.get("command", ""))
     if call.name == "read" and a.get("offset"):
-        return f"{a.get('path', '')}:{a['offset']}"
-    return str(a.get("path", ""))
+        return f"{short(a.get('path', ''))}:{a['offset']}"
+    return short(str(a.get("path", "")))
 
 
 class Terminal:
@@ -103,7 +109,7 @@ class Terminal:
             color = RED if ev.result.is_error else DIM
             shown = lines[:4]
             for line in shown:
-                print(paint(color, f"  │ {line[:160]}"))
+                print(paint(color, f"  │ {short(line)[:160]}"))
             if len(lines) > len(shown):
                 print(paint(DIM, f"  │ … {len(lines) - len(shown)} more lines"))
         elif isinstance(ev, Retrying):
@@ -172,7 +178,21 @@ def build_agent(model: str, log: Log, term: Terminal, cwd: Path, base_url: str |
                  approve=term.approve, on=term.on)
 
 
+def load_env_file() -> None:
+    """Read KEY=value lines from ~/.diwan/env (keep it chmod 600). Real env vars win."""
+    path = Path(os.environ.get("DIWAN_HOME", Path.home() / ".diwan")) / "env"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for line in lines:
+        key, sep, value = line.strip().partition("=")
+        if sep and key and not key.startswith("#"):
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
 def main(argv: list[str] | None = None) -> int:
+    load_env_file()
     ap = argparse.ArgumentParser(prog="diwan", description="A coding agent that keeps a record of everything.")
     ap.add_argument("-m", "--model", default=os.environ.get("DIWAN_MODEL", DEFAULT_MODEL))
     ap.add_argument("-p", "--print", dest="prompt", help="run one task and exit")
