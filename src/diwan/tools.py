@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -29,6 +31,26 @@ class Spec:
         return self.tool.name
 
 
+def find_shell() -> tuple[list[str], str]:
+    """The command prefix to run a shell command, and the shell's name for the model.
+    Windows: Git Bash if installed (never WSL's System32 bash), else PowerShell."""
+    if os.name != "nt":
+        return ([shutil.which("bash")], "bash") if shutil.which("bash") else (["/bin/sh"], "sh")
+    candidates = []
+    git = shutil.which("git")
+    if git:  # ...\Git\cmd\git.exe -> ...\Git\bin\bash.exe
+        candidates.append(Path(git).resolve().parent.parent / "bin" / "bash.exe")
+    for base in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)"),
+                 os.environ.get("LOCALAPPDATA") and str(Path(os.environ["LOCALAPPDATA"]) / "Programs")):
+        if base:
+            candidates.append(Path(base) / "Git" / "bin" / "bash.exe")
+    for c in candidates:
+        if c.is_file():
+            return [str(c)], "bash (Git Bash on Windows)"
+    ps = shutil.which("pwsh") or shutil.which("powershell") or "powershell"
+    return [ps, "-NoProfile", "-NonInteractive"], "PowerShell"
+
+
 def _clip(text: str) -> str:
     if len(text) <= MAX_OUTPUT:
         return text
@@ -37,6 +59,7 @@ def _clip(text: str) -> str:
 
 
 def make_tools(cwd: Path) -> dict[str, Spec]:
+    shell, shell_name = find_shell()
     def resolve(path: str) -> Path:
         p = Path(path).expanduser()
         return p if p.is_absolute() else cwd / p
@@ -77,8 +100,9 @@ def make_tools(cwd: Path) -> dict[str, Spec]:
 
     def bash(command: str, timeout: int = 120) -> str:
         try:
-            r = subprocess.run(command, shell=True, cwd=cwd, capture_output=True, text=True,
-                               timeout=timeout, errors="replace")
+            flag = "-Command" if shell_name == "PowerShell" else "-c"
+            r = subprocess.run([*shell, flag, command], cwd=cwd, capture_output=True, text=True,
+                               timeout=timeout, encoding="utf-8", errors="replace")
         except subprocess.TimeoutExpired as e:
             partial = (e.stdout or "") + (e.stderr or "") if isinstance(e.stdout, str) else ""
             raise ToolError(f"timed out after {timeout}s\n{_clip(partial)}")
@@ -102,8 +126,8 @@ def make_tools(cwd: Path) -> dict[str, Spec]:
                   "unless replace_all is set. Read the file first.", obj({
             "path": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"},
             "replace_all": {"type": "boolean"}}, ["path", "old", "new"])), edit, False),
-        Spec(Tool("bash", "Run a shell command in the project directory. Use it to list and "
-                  "search files, run tests, git, etc.", obj({
+        Spec(Tool("bash", f"Run a shell command in the project directory with {shell_name}. "
+                  "Use it to list and search files, run tests, git, etc.", obj({
             "command": {"type": "string"},
             "timeout": {"type": "integer", "description": "seconds (default 120)"}},
             ["command"])), bash, False),
