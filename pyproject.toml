@@ -7,7 +7,10 @@ authors = [
     { name = "Zine-Elabidine LAABOUDI", email = "zine.elabidine251@gmail.com" }
 ]
 requires-python = ">=3.12"
-dependencies = ["tarjuman"]
+dependencies = [
+    "rich>=15.0.0",
+    "tarjuman",
+]
 
 [project.scripts]
 diwan = "diwan.cli:main"

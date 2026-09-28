@@ -158,3 +158,21 @@ def test_edit_tool_rules(tmp_path):
 def test_bash_reports_exit_code_and_stderr(tmp_path):
     out = make_tools(tmp_path)["bash"].run(command="echo hi; echo oops >&2; exit 3")
     assert "hi" in out and "oops" in out and "[exit code 3]" in out
+
+
+def test_ui_renders_markdown_tools_and_small_costs(tmp_path):
+    from rich.console import Console
+    from diwan.ui import Terminal, fmt_cost
+
+    assert fmt_cost(0.0000694) == "$0.000069" and fmt_cost(0) == "$0" and fmt_cost(0.25) == "$0.2500"
+    console = Console(record=True, width=80, force_terminal=False)
+    term = Terminal(console, auto_approve=True)
+    a = Agent(Fake([Message("assistant", [Text("thinking"), ToolCall("c1", "bash", '{"command":"echo hi"}')]),
+                    Message("assistant", [Text("My name is **Diwan**.")], usage=Usage(900, 0, 0, 70, 0, 0.0000694))]),
+              "m", Log.new(cwd=str(tmp_path)), make_tools(tmp_path), "sys",
+              approve=term.approve, on=term.on)
+    a.turn("hi")
+    out = console.export_text()
+    assert "**" not in out and "My name is Diwan." in out
+    assert "● bash  echo hi" in out and "⎿ hi" in out
+    assert "$0.000069" in out and "session $0.000069" in out

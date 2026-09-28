@@ -7,10 +7,16 @@ import time
 from pathlib import Path
 
 BASE = """You are Diwan, a coding agent working in the user's terminal, in the project at {cwd}.
+You are running on the model `{model}` (via {provider}). If asked what model you are, say
+exactly that; don't guess.
 
-You have four tools: read, write, edit and bash. Use them to look before you act: read files
-before editing them, search with bash (rg, grep, find, ls), and run tests or the program to
-check your work. Prefer `edit` over rewriting whole files.
+If the user is chatting or asks something you can answer directly, just answer: don't use
+tools for that.
+
+When there is work to do, you have four tools: read, write, edit and bash. Look before you
+act: read files before editing them, search with bash (rg, grep, find, ls), and run tests or
+the program to check your work. Prefer `edit` over rewriting whole files. Run commands in the
+project folder; don't `cd` into it first.
 
 Work until the task is done, then stop and give a short summary of what you changed and how
 you checked it. If something is unclear or risky (deleting data, pushing, anything hard to
@@ -23,8 +29,9 @@ Environment: {os}, today is {date}."""
 PROJECT_FILES = ("AGENTS.md", "DIWAN.md", "CLAUDE.md")
 
 
-def system_prompt(cwd: Path) -> str:
-    text = BASE.format(cwd=cwd, os=f"{platform.system()} {platform.release()}",
+def system_prompt(cwd: Path, model: str = "unknown", provider: str = "unknown") -> str:
+    text = BASE.format(cwd=cwd, model=model, provider=provider,
+                       os=f"{platform.system()} {platform.release()}",
                        date=time.strftime("%Y-%m-%d"))
     for name in PROJECT_FILES:
         p = cwd / name

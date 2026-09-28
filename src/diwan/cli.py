@@ -1,4 +1,4 @@
-"""The terminal: `diwan` for a chat, `diwan -p "task"` for one shot."""
+"""The command line: `diwan` for a chat, `diwan -p "task"` for one shot."""
 
 from __future__ import annotations
 
@@ -7,175 +7,28 @@ import os
 import sys
 from pathlib import Path
 
-from tarjuman import (BlockStart, ReasoningDelta, TarjumanError, TextDelta, ToolCall, Usage)
+from rich.text import Text
+
+from tarjuman import TarjumanError
 from tarjuman import providers
 
 from . import __version__
-from .agent import (Agent, Retrying, StateChanged, ToolFinished, ToolStarted, TurnEnded,
-                    UIEvent)
+from .agent import Agent
 from .log import Log
 from .prompt import system_prompt
-from .tools import Spec, make_tools
+from .tools import make_tools
+from .ui import Terminal, fmt_usage
 
 DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
-DIM, RED, GREEN, CYAN, BOLD, RESET = "\033[2m", "\033[31m", "\033[32m", "\033[36m", "\033[1m", "\033[0m"
-CLEAR = "\r\033[K"
 
-HELP = """/model <id>   switch model (any OpenRouter id, e.g. deepseek/deepseek-v4-flash)
-/cost         tokens and cost for this session
-/new          start a new session
-/exit         quit (or Ctrl-D).  Ctrl-C stops the agent mid-turn."""
+HELP = """[bold]/model[/bold] <id>   switch model (any OpenRouter id, e.g. z-ai/glm-5.3-flash)
+[bold]/think[/bold]        show or hide the model's reasoning
+[bold]/cost[/bold]         tokens and cost for this session
+[bold]/new[/bold]          start a new session
+[bold]/exit[/bold]         quit (or Ctrl-D).  Ctrl-C stops the agent mid-turn."""
 
-
-def _color() -> bool:
-    return sys.stdout.isatty() and not os.environ.get("NO_COLOR")
-
-
-def paint(code: str, text: str) -> str:
-    return f"{code}{text}{RESET}" if _color() else text
-
-
-def fmt_tokens(n: int) -> str:
-    return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
-
-
-def fmt_usage(u: Usage) -> str:
-    parts = [f"{fmt_tokens(u.input + u.cache_read + u.cache_write)} in"]
-    if u.cache_read:
-        parts[-1] += f" ({fmt_tokens(u.cache_read)} cached)"
-    parts.append(f"{fmt_tokens(u.output)} out")
-    if u.cost is not None:
-        parts.append(f"${u.cost:.4f}")
-    return " · ".join(parts)
-
-
-def short(text: str) -> str:
-    """Show paths relative to the project folder."""
-    cwd = str(Path.cwd())
-    return text.replace(cwd + "/", "").replace(cwd, ".")
-
-
-def summarize_call(call: ToolCall) -> str:
-    try:
-        a = call.args()
-    except ValueError:
-        return call.arguments[:80]
-    if call.name == "bash":
-        return short(a.get("command", ""))
-    if call.name == "read" and a.get("offset"):
-        return f"{short(a.get('path', ''))}:{a['offset']}"
-    return short(str(a.get("path", "")))
-
-
-class Terminal:
-    """Renders loop events and asks for approvals."""
-
-    def __init__(self, auto_approve: bool = False, interactive: bool = True):
-        self.always: set[str] = set()
-        self.auto = auto_approve
-        self.interactive = interactive
-        self.spinner = False
-        self.kind: str | None = None   # kind of block being streamed
-        self.shown: str | None = None  # call already printed by the approval prompt
-
-    def _clear_spinner(self) -> None:
-        if self.spinner:
-            sys.stdout.write(CLEAR)
-            self.spinner = False
-
-    def on(self, ev: UIEvent) -> None:
-        if isinstance(ev, StateChanged):
-            if ev.state == "thinking" and _color():
-                sys.stdout.write(paint(DIM, "… thinking"))
-                sys.stdout.flush()
-                self.spinner = True
-            return
-        self._clear_spinner()
-        if isinstance(ev, BlockStart):
-            if self.kind is not None:
-                sys.stdout.write("\n")
-            self.kind = ev.kind if ev.kind != "tool_call" else None
-        elif isinstance(ev, ReasoningDelta):
-            sys.stdout.write(paint(DIM, ev.text))
-        elif isinstance(ev, TextDelta):
-            sys.stdout.write(ev.text)
-        elif isinstance(ev, ToolStarted):
-            self._end_block()
-            if ev.call.id != self.shown:
-                print(f"{paint(CYAN, '●')} {paint(BOLD, ev.call.name)} {summarize_call(ev.call)}")
-        elif isinstance(ev, ToolFinished):
-            self._end_block()
-            lines = ev.result.content.splitlines() or [""]
-            color = RED if ev.result.is_error else DIM
-            shown = lines[:4]
-            for line in shown:
-                print(paint(color, f"  │ {short(line)[:160]}"))
-            if len(lines) > len(shown):
-                print(paint(DIM, f"  │ … {len(lines) - len(shown)} more lines"))
-        elif isinstance(ev, Retrying):
-            self._end_block()
-            print(paint(RED, f"  {ev.error.code}, retrying in {ev.wait:.0f}s (attempt {ev.attempt})"))
-        elif isinstance(ev, TurnEnded):
-            self._end_block()
-            mark = {"done": paint(GREEN, "✓"), "interrupted": paint(RED, "■ interrupted")}.get(
-                ev.reason, paint(RED, f"■ stopped: {ev.reason}"))
-            print(paint(DIM, f"{mark} {ev.steps} step{'s' if ev.steps != 1 else ''} · {fmt_usage(ev.usage)}"))
-            if ev.error:
-                print(paint(RED, f"  {ev.error}"))
-        sys.stdout.flush()
-
-    def _end_block(self) -> None:
-        if self.kind is not None:
-            sys.stdout.write("\n")
-            self.kind = None
-
-    def approve(self, call: ToolCall, spec: Spec) -> bool:
-        self._clear_spinner()
-        self._end_block()
-        print(f"{paint(CYAN, '●')} {paint(BOLD, call.name)} {summarize_call(call)}")
-        self.shown = call.id
-        if call.name in ("write", "edit"):
-            preview(call)
-        if self.auto or call.name in self.always:
-            return True
-        if not self.interactive:
-            return False
-        while True:
-            try:
-                answer = input(f"  allow? [y]es / [n]o / [a]lways {call.name} › ").strip().lower()
-            except EOFError:
-                return False
-            if answer in ("y", "yes", ""):
-                return True
-            if answer in ("n", "no"):
-                return False
-            if answer in ("a", "always"):
-                self.always.add(call.name)
-                return True
-
-
-def preview(call: ToolCall) -> None:
-    try:
-        a = call.args()
-    except ValueError:
-        return
-    if call.name == "edit":
-        for line in str(a.get("old", "")).splitlines()[:8]:
-            print(paint(RED, f"  - {line}"))
-        for line in str(a.get("new", "")).splitlines()[:8]:
-            print(paint(GREEN, f"  + {line}"))
-    else:
-        lines = str(a.get("content", "")).splitlines()
-        for line in lines[:6]:
-            print(paint(GREEN, f"  + {line}"))
-        if len(lines) > 6:
-            print(paint(DIM, f"  … {len(lines) - 6} more lines"))
-
-
-def build_agent(model: str, log: Log, term: Terminal, cwd: Path, base_url: str | None) -> Agent:
-    provider = providers.local(base_url) if base_url else providers.openrouter()
-    return Agent(provider, model, log, make_tools(cwd), system_prompt(cwd),
-                 approve=term.approve, on=term.on)
+# readline miscounts the prompt width unless color codes are wrapped in \001..\002
+PROMPT = "\001\033[1;36m\002› \001\033[0m\002"
 
 
 def load_env_file() -> None:
@@ -191,6 +44,13 @@ def load_env_file() -> None:
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
+def build_agent(model: str, log: Log, term: Terminal, cwd: Path, base_url: str | None) -> Agent:
+    provider = providers.local(base_url) if base_url else providers.openrouter()
+    return Agent(provider, model, log, make_tools(cwd),
+                 system_prompt(cwd, model, provider.provider),
+                 approve=term.approve, on=term.on)
+
+
 def main(argv: list[str] | None = None) -> int:
     load_env_file()
     ap = argparse.ArgumentParser(prog="diwan", description="A coding agent that keeps a record of everything.")
@@ -200,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--base-url", default=os.environ.get("DIWAN_BASE_URL"),
                     help="an OpenAI-compatible server instead of OpenRouter (vLLM, llama.cpp...)")
     ap.add_argument("-y", "--yes", action="store_true", help="approve every tool call")
+    ap.add_argument("--think", action="store_true", help="show the model's reasoning")
     ap.add_argument("--version", action="version", version=f"diwan {__version__}")
     args = ap.parse_args(argv)
 
@@ -214,11 +75,13 @@ def main(argv: list[str] | None = None) -> int:
     else:
         log = Log.new(cwd=str(cwd), model=args.model, diwan=__version__)
 
-    term = Terminal(auto_approve=args.yes, interactive=args.prompt is None)
+    term = Terminal(auto_approve=args.yes, interactive=args.prompt is None,
+                    show_reasoning=args.think)
+    c = term.console
     try:
         agent = build_agent(args.model, log, term, cwd, args.base_url)
     except TarjumanError as e:
-        print(paint(RED, str(e)), file=sys.stderr)
+        c.print(Text(str(e), style="red"))
         return 1
 
     if args.prompt:
@@ -229,10 +92,11 @@ def main(argv: list[str] | None = None) -> int:
         import readline  # noqa: F401  line editing and history for input()
     except ImportError:
         pass
-    print(paint(DIM, f"diwan {__version__} · {args.model} · session {log.id} · /help"))
+    c.print(f"[bold cyan]diwan[/bold cyan] [dim]{__version__} · {args.model} · "
+            f"{cwd} · /help[/dim]\n")
     while True:
         try:
-            text = input(paint(BOLD, "› ")).strip()
+            text = input(PROMPT).strip()
         except EOFError:
             print()
             return 0
@@ -241,27 +105,34 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if not text:
             continue
-        if text.startswith("/"):
-            cmd, _, rest = text.partition(" ")
-            if cmd in ("/exit", "/quit"):
-                return 0
-            elif cmd == "/help":
-                print(HELP)
-            elif cmd == "/model":
-                if rest.strip():
-                    agent.model = rest.strip()
-                    log.append("model", {"model": agent.model})
-                print(paint(DIM, f"model: {agent.model}"))
-            elif cmd == "/cost":
-                print(paint(DIM, fmt_usage(agent.total)))
-            elif cmd == "/new":
-                log = Log.new(cwd=str(cwd), model=agent.model, diwan=__version__)
-                agent = build_agent(agent.model, log, term, cwd, args.base_url)
-                print(paint(DIM, f"new session {log.id}"))
-            else:
-                print(f"unknown command {cmd}; /help")
+        if not text.startswith("/"):
+            c.print()
+            agent.turn(text)
             continue
-        agent.turn(text)
+        cmd, _, rest = text.partition(" ")
+        rest = rest.strip()
+        if cmd in ("/exit", "/quit"):
+            return 0
+        elif cmd == "/help":
+            c.print(HELP)
+        elif cmd == "/model":
+            if rest:
+                agent.model = rest
+                agent.system = system_prompt(cwd, rest, agent.provider.provider)
+                log.append("model", {"model": rest})
+            c.print(f"[dim]model: {agent.model}[/dim]")
+        elif cmd == "/think":
+            term.show_reasoning = not term.show_reasoning
+            c.print(f"[dim]reasoning {'shown' if term.show_reasoning else 'hidden'}[/dim]")
+        elif cmd == "/cost":
+            c.print(f"[dim]{fmt_usage(agent.total)}[/dim]")
+        elif cmd == "/new":
+            log = Log.new(cwd=str(cwd), model=agent.model, diwan=__version__)
+            agent = build_agent(agent.model, log, term, cwd, args.base_url)
+            c.print(f"[dim]new session {log.id}[/dim]")
+        else:
+            c.print(f"[dim]unknown command {cmd}; /help[/dim]")
+        c.print()
 
 
 if __name__ == "__main__":
