@@ -1,0 +1,94 @@
+"""The register: an append-only, tree-shaped event log, one JSONL file per session.
+
+Every event has an id and a parent. The conversation the model sees is the path from the
+current head back to the root; nothing is ever deleted, so branching later is just moving
+the head to an older event."""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from tarjuman import Message
+
+
+def sessions_dir() -> Path:
+    return Path(os.environ.get("DIWAN_HOME", Path.home() / ".diwan")) / "sessions"
+
+
+@dataclass
+class Event:
+    id: str
+    parent: str | None
+    type: str
+    data: dict[str, Any]
+    ts: float = field(default_factory=time.time)
+
+
+class Log:
+    def __init__(self, path: Path, events: list[Event]):
+        self.path = path
+        self.events = events
+        self.by_id = {e.id: e for e in events}
+        self.head: str | None = events[-1].id if events else None
+
+    @classmethod
+    def new(cls, **meta: Any) -> Log:
+        d = sessions_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        sid = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
+        log = cls(d / f"{sid}.jsonl", [])
+        log.append("session", {"id": sid, **meta})
+        return log
+
+    @classmethod
+    def load(cls, path: Path) -> Log:
+        events = [Event(**json.loads(line)) for line in path.read_text(encoding="utf-8").splitlines()
+                  if line.strip()]
+        return cls(path, events)
+
+    @classmethod
+    def latest(cls, cwd: str) -> Log | None:
+        """The most recent session started in `cwd`."""
+        d = sessions_dir()
+        if not d.exists():
+            return None
+        for p in sorted(d.glob("*.jsonl"), reverse=True):
+            with p.open(encoding="utf-8") as f:
+                first = f.readline()
+            if first and json.loads(first)["data"].get("cwd") == cwd:
+                return cls.load(p)
+        return None
+
+    @property
+    def id(self) -> str:
+        return self.events[0].data["id"]
+
+    def append(self, type: str, data: dict[str, Any]) -> str:
+        e = Event(uuid.uuid4().hex[:12], self.head, type, data)
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(e.__dict__, ensure_ascii=False) + "\n")
+        self.events.append(e)
+        self.by_id[e.id] = e
+        self.head = e.id
+        return e.id
+
+    def add_message(self, m: Message) -> str:
+        return self.append("message", m.to_dict())
+
+    def path_to_head(self) -> list[Event]:
+        out, cur = [], self.head
+        while cur is not None:
+            e = self.by_id[cur]
+            out.append(e)
+            cur = e.parent
+        return out[::-1]
+
+    def messages(self) -> list[Message]:
+        """The conversation along the current branch."""
+        return [Message.from_dict(e.data) for e in self.path_to_head() if e.type == "message"]

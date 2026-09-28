@@ -8,7 +8,18 @@ speaks every model's language. Built from the loop up: no framework underneath.
 > collected works. The word crossed Persian, Arabic, Turkish, Italian (*dogana*),
 > Spanish (*aduana*) and French (*douane*).
 
-**Status:** study phase done (see `docs/notes/`, `docs/comparison.md`); choosing a direction.
+**Status:** v0 works: a terminal coding agent with four tools (read, write, edit, bash),
+approvals, retries, and a tree-shaped JSONL log of every session in `~/.diwan/sessions/`.
+
+```
+uv tool install -e ~/diwan          # once
+export OPENROUTER_API_KEY=...       # https://openrouter.ai/keys
+diwan                               # chat in the current folder
+diwan -m deepseek/deepseek-v4-flash # any OpenRouter model
+diwan -p "fix the failing test" -y  # one shot, approve everything
+diwan -r                            # resume the last session here
+diwan --base-url http://localhost:8000/v1 -m <model>   # local vLLM / llama.cpp
+```
 
 ## Layout
 

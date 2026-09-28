@@ -97,7 +97,11 @@ what the original provider needs, opaque to everyone else.
   fallback. Failed attempts: dsh logs them as `assistant/attempt`, *kept in the log but
   excluded from the model's history*.
 
-**⏸ PROPOSED, not locked yet (2026-09-27), resume here:**
+**v0 default (2026-09-28), not locked:** a turn ends on no tool calls, `max_tokens`, a step cap
+(60), interrupt, or a non-retryable error; retries with backoff are logged as `error` events and
+never shown to the model. Budgets, stop hooks and review/council phases come later.
+
+**⏸ PROPOSED, not locked yet (2026-09-27):**
 - a) turn / step vocabulary, both logged as events.
 - b) A turn ends on: no tool calls; `max_tokens` (reason logged); a tool that concludes the turn.
   A stop hook can refuse the end and inject a message; new user input keeps the turn going.
