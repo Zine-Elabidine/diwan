@@ -17,7 +17,7 @@ from .log import Log
 from .prompt import system_prompt
 from .tools import Spec, make_tools
 
-DEFAULT_MODEL = "anthropic/claude-sonnet-5"
+DEFAULT_MODEL = "z-ai/glm-5.3-flash"
 DIM, RED, GREEN, CYAN, BOLD, RESET = "\033[2m", "\033[31m", "\033[32m", "\033[36m", "\033[1m", "\033[0m"
 CLEAR = "\r\033[K"
 
