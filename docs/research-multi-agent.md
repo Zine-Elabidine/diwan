@@ -164,3 +164,76 @@ model on X at Y% of the cost", and publish the numbers.
 - "Looking for the right harness" (continuity): r/ClaudeAI, 2026-09-17
 - Artificium thread (skeptic replies): https://www.reddit.com/r/LocalLLaMA/comments/1wfmzez/
 - Forcefield: https://github.com/fabledruns/forcefield ; Tuneloop: https://github.com/tuneloop/tuneloop
+
+---
+
+# Decision models ("System One"): Jev, CLM-8B and friends (2026-09-28)
+
+## What they are
+- **Jev** (TypeSafe AI, launched 2026-09-15, $40M seed, founder Diogo Almeida, ex-OpenAI). A
+  **non-autoregressive decision model**: it never writes text. Given a context and a declared
+  set of options, it returns a typed decision with probabilities in one forward pass.
+  Interface: **Noul** (probability a statement is true), **Choice** (one of N options),
+  **Score** (level on an ordered rubric). Trained with "RL for Calibrated Decisions".
+  Claims 20–200× faster and 40–400× cheaper than small frontier LLMs; output can't break the
+  schema. Limits: 32K context, text/JSON only, waitlist, **no paper and no independent
+  benchmarks**; vendor numbers only. The founder concedes it can be "confidently wrong".
+- **CLM-8B** (Stanford + NVIDIA, open weights, Apache 2.0, 2026-09-23). Frozen Qwen3-8B with a
+  *state head* and an *action head* trained contrastively (InfoNCE) on 60M QA pairs and 1M
+  agent trajectories. Same Noul/Choice/Score API as Jev. **Caches the action embeddings**, so
+  re-scoring the same candidates is nearly free: 9× lower latency than Jev, 13× with ~1k
+  candidates. Measured on *decision accuracy* (not task success):
+  - picking the correct solution among Opus 5 / Fable 5 candidates: DeepSWE 81.6% (Jev 71.1%),
+    Terminal-Bench 2.1 87.6%;
+  - tool calling 95.2% (Jev 99.2%); WikiRacing 26/30 (Jev 30/30).
+  Its own pitch: "large models generate and reason; CLMs cheaply **select, verify and monitor**."
+- Ecosystem in two weeks: open replicas (jevlike, Eikos, laya-mps at 0.74 GB on a Mac), a free
+  Jev Router on the Dot platform, "Jev-ify any open model" (SimpleJev). jevlike's recipe: each
+  option becomes a query that attends over the context, then a shared dot product and a softmax.
+
+## The "Jev harness" (hype vs substance)
+A 12-page blueprint, much reposted (up to 980 likes): *the LLM writes, the harness executes, the
+decision model decides what each turn sees, where it routes and whether it runs.* The places the
+decision model is used: **model-tier routing**, **scoring context chunks** (keep/summarize/hide),
+**tiered tool disclosure**, **routing by trust/permission**, **gating every command**
+(allow/ask/deny). Measured: ~$0.0002 per step. **No published end-to-end numbers**; one tracker
+notes that "most of what circulated is an architecture sketch with no number attached".
+"200× cheaper" is per decision, not per task. A coding task's cost is dominated by the big
+model's generation, so the task-level saving is much smaller.
+
+## Honest verdict on usefulness in agent workflows
+It pays off only where a harness makes **many small decisions that today cost an LLM call** (the
+rule of thumb quoted: decisions outnumber generations 10:1). In a plain coding loop there are few
+such calls, so the gain is small. That matches his doubt. But councils and swarms are full of
+them:
+
+| Decision point in Diwan | Today | With a decision model |
+|---|---|---|
+| **Race: which candidate wins** | LLM judge (slow, costly) or tests only | CLM scores N candidates + tests; the best measured use so far |
+| **Debate: converged yet? who is confident?** | ask an LLM every round | Noul/Score per round, calibrated probabilities |
+| **Escalation: convene the council?** | the agent guesses | Noul "is this risky or uncertain?" on every step, nearly free |
+| **What ends a turn (#3)**, continue/stop | model stops calling tools | an extra calibrated check: "is the task actually done?" |
+| **Permission gating (#10)** | rules + prompts | Choice allow/ask/deny with a probability; ask when unsure |
+| **Context scoring (#8)** | recency, whole outputs | Score each chunk: keep / summarize / drop |
+| **Model routing** (Tarjuman) | fixed config | Choice of tier per step |
+| **Monitoring a swarm** | a human watching | Noul "is this worker stuck/looping?" on every event |
+
+## How to engineer it into Diwan
+- One interface, `decide(kind=noul|choice|score, context, options) → probabilities`, with
+  backends: **CLM-8B local**, Jev API, or a fallback that asks an ordinary LLM for a JSON answer
+  (with logprobs when available). Tarjuman could host it as a second model family.
+- **Every decision is an event in the log**, with its inputs, probabilities and the eventual
+  outcome, so each one can later be scored against what happened. That is also a training set
+  for fine-tuning his own decision head (contrastive heads on a frozen encoder, like CLM). This
+  sits right in his RL/fine-tuning skill set.
+- Calibration matters more than accuracy: use thresholds with an "ask the user / escalate to a
+  big model" band in the middle.
+- Treat vendor claims as unverified until measured on our own tasks.
+
+## Sources
+- Latent Space AINews on Jev: https://www.latent.space/p/ainews-jev-a-system-one-model-that
+- Skeptical audit: https://flowtivity.ai/blog/jev-typesafe-ai-decision-model/
+- Jev harness summary: https://madewithjev.com/jev-agentic-harness
+- CLM-8B: https://venturebeat.com/technology/stanford-and-nvidias-open-clm-8b-caches-reusable-agent-actions-and-runs-up-to-9x-faster-than-jev-in-tests , https://huggingface.co/Contrastive-LM/CLM-v0.1-8B
+- jevlike: https://github.com/vinnylarouge/jevlike
+- Jev explainer (1.8k likes): https://x.com/matthewcanham/status/2102077098756280413
