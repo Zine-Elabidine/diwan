@@ -237,3 +237,84 @@ them:
 - CLM-8B: https://venturebeat.com/technology/stanford-and-nvidias-open-clm-8b-caches-reusable-agent-actions-and-runs-up-to-9x-faster-than-jev-in-tests , https://huggingface.co/Contrastive-LM/CLM-v0.1-8B
 - jevlike: https://github.com/vinnylarouge/jevlike
 - Jev explainer (1.8k likes): https://x.com/matthewcanham/status/2102077098756280413
+
+---
+
+# Practitioner round 2: cross-model pairs, control planes, harness cost (2026-09-28)
+
+Triggered by two posts he shared: (1) a Claude Code vs Codex architecture comparison whose thesis
+is "Codex has P0 infrastructure and P2 choreography; Claude wins on the control plane", and
+(2) an Opus-in-Claude-Code + GPT-in-Codex peer setup inspired by Fusion.
+(Diwan rule: we keep only the general principles from post 1, never references to any leaked source.)
+
+## Principles worth keeping from post 1
+- **Declared states, not emergent ones.** One turn state machine (preparing context, sampling,
+  running tools, waiting on user, compacting) so the user always knows whether the agent is
+  thinking or waiting. The complaint about Codex: "not knowing when it's waiting on me".
+- **A tool execution graph.** Classify tools (read-only / edit / exec / external) so reads batch in
+  parallel and results stream in order.
+- **One effective permission context.** The same approval must mean the same thing on every path:
+  subagents, MCP tools, retries, thread switches. Leaky layers are "a trust killer".
+- **One context governor** deciding what stays, what gets summarized, what gets retrieved.
+- **Revision-aware edits** (read → record revision → localized edit → staleness check → diff).
+- **Structured artifacts:** plans, approvals and verification reports as schemas, not prose.
+- **Policy packs:** let people share safety and verification behavior, not just tools.
+- **Deterministic replay** as a flagship feature, which Diwan's event log gives for free.
+
+## Cross-model pairs (post 2 + threads)
+- Setup: Opus in Claude Code and GPT in Codex as **peer agents that can start and resume each
+  other's sessions** through a local bridge. **One owns the implementation; the other is
+  review-only**, so it can push back without taking over. Every handoff is appended to a shared
+  file: owner, role, files touched, **what it actually validated**. A top model is the
+  tie-breaker. Rule: **no rubber-stamping.** Claude reviews the data contract before Codex
+  writes; Codex re-checks Claude's claims against the real code.
+- Fusion claim he quoted: **~3/4 of the gain comes from the synthesis and checking step**, only
+  ~1/4 from the models thinking differently.
+- r/ClaudeAI, "12 tasks every session leaves behind" (Claude Code + Hermes + Codex for a year):
+  - "The reviewer being a different model than the author is the whole trick. Same model in the
+    same context always agrees with itself."
+  - **Cap review at two rounds**; "round 3 is where it starts changing things that were fine."
+  - Follow-ups become cards on a board with an owner, or they don't exist. This stops duplicate
+    work between agents.
+  - "Don't let the session own the unfinished work": a persistent layer owns the backlog, and
+    Claude or Codex are just execution bodies.
+- Many small tools exist just to bridge harnesses: MegaLens (second opinion), codex-resume,
+  Nimrod (cross-agent work memory), "made them review each other automatically". That is
+  demand for **multi-provider as a native feature**.
+
+## Other signals from X
+- **Harness Tax** (UC Berkeley + Arena): 21 model × harness pairs on SWE-bench Lite and
+  Terminal-Bench 2.0. The harness barely changes success (±2–5%) but changes **cost by up to
+  5×**. Claude Code costs ~2× Pi, ~1.6× Codex. Pi, with just read/write/edit/bash, sits on the
+  Pareto frontier. → Diwan: stay lean, measure cost per task, and publish it.
+- Where tokens go (Jev harness PDF): **reading and searching are 56% of tool turns and 46.5% of
+  tokens; writing code is under 10%.** Switching models mid-task re-processes the whole context
+  (Opus→Sonnet→Opus cost more than pure Opus). → Context routing matters more than model routing.
+- **Self-improving harness** (1.2k likes): agents turn failing traces into versioned eval
+  scenarios, run them, and propose harness changes. Papers: Self-Harness (2606.09498),
+  Harness-R1 (2608.02276).
+- **Corrections belong in memory, not chat:** "I wasn't teaching the system, I was teaching a
+  conversation." A shared correction file ended a mistake that had come back 4 times. (Telepathy.)
+- **"Leave the gap visible":** an agent that finished everything had silently guessed 3 missing
+  pieces. Success was redefined as moving forward while marking what's missing. → A first-class
+  "unresolved" marker in reports.
+- **Decision model picks worker profile + effort per task** (Jev + Opus): main session clarifies
+  "done", builders get low/medium effort by task type.
+- Everything-department setups (68 subagents, 286 skills): a plan before any build, a failing
+  test before any fix, and **every change re-read by a context that never watched it being
+  written**.
+- Unverified: a post claims "researchers from Anthropic, OpenAI and SpaceX built a meta-agent
+  orchestrator on Jev (arXiv:2606.04455, 18,430 runs)". Treat as hype until the paper is read.
+
+## Sources
+- Harness Tax: https://arena.ai/blog/coding-agents-harness-tax
+- Harness Engineering, a study of eleven systems: https://arxiv.org/abs/2609.00006
+- Self-Harness: https://arxiv.org/abs/2606.09498
+- "12 tasks" thread: https://www.reddit.com/r/ClaudeAI/comments/1wiw1ql/
+- Where tokens go: https://x.com/0xCarnagee/status/2102202198918643929
+- Self-improving harness: https://x.com/muratcan/status/2103228946292601281
+- Corrections into memory: https://x.com/Lummox_eth/status/2102008745475670040
+- Leave the gap visible: https://x.com/Lummox_eth/status/2102098316674638091
+- Jev picks worker + effort: https://x.com/Av1dlive/status/2103852115341049897
+- Nimrod: https://www.reddit.com/r/ClaudeAI/comments/1wlj0uq/
+- codex-resume: https://www.reddit.com/r/ClaudeAI/comments/1wp2z3t/
