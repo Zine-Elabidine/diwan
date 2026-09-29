@@ -10,7 +10,7 @@ from pathlib import Path
 from rich.text import Text
 
 from tarjuman import TarjumanError
-from tarjuman import providers
+from tarjuman import Anthropic, providers
 
 from . import __version__
 from .agent import Agent
@@ -49,10 +49,13 @@ DEFAULT_MODELS = {"openrouter": DEFAULT_MODEL, "anthropic": "claude-sonnet-5-5"}
 
 def build_agent(model: str, log: Log, term: Terminal, cwd: Path, base_url: str | None,
                 provider_name: str = "openrouter") -> Agent:
-    if base_url:
+    if provider_name == "anthropic":
+        # with --base-url: an Anthropic-compatible gateway (Bifrost, a proxy); it may need no key
+        provider = (Anthropic(os.environ.get("ANTHROPIC_API_KEY"), base_url=base_url,
+                              provider="anthropic-gateway")
+                    if base_url else providers.anthropic())
+    elif base_url:
         provider = providers.local(base_url)
-    elif provider_name == "anthropic":
-        provider = providers.anthropic()
     else:
         provider = providers.openrouter()
     return Agent(provider, model, log, make_tools(cwd),
@@ -70,7 +73,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("-p", "--print", dest="prompt", help="run one task and exit")
     ap.add_argument("-r", "--resume", nargs="?", const="last", help="resume the last session here, or a session file")
     ap.add_argument("--base-url", default=os.environ.get("DIWAN_BASE_URL"),
-                    help="an OpenAI-compatible server instead of OpenRouter (vLLM, llama.cpp...)")
+                    help="a server instead of OpenRouter: OpenAI-compatible (vLLM, llama.cpp, "
+                         "a gateway such as Bifrost), or Anthropic-compatible with --provider anthropic")
     ap.add_argument("-y", "--yes", action="store_true", help="approve every tool call")
     ap.add_argument("--think", action="store_true", help="show the model's reasoning")
     ap.add_argument("--plain", action="store_true", help="simple line mode instead of the full-screen app")
