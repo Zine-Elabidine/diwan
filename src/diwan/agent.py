@@ -9,15 +9,18 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-from tarjuman import (BlockStart, Event, Finish, Message, ReasoningDelta, TarjumanError, Text,
-                      TextDelta, Tool, ToolCall, ToolCallDelta, ToolResult, Usage)
-from tarjuman.types import Reasoning
+from tarjuman import (BlockEnd, BlockStart, Event, Finish, Message, Reasoning, ReasoningDelta,
+                      Replay, TarjumanError, Text, TextDelta, Tool, ToolCall, ToolCallDelta,
+                      ToolResult, Usage)
 
 from .log import Log
 from .tools import Spec, ToolError
 
 State = Literal["thinking", "running", "waiting", "idle"]
 Reason = Literal["done", "max_tokens", "max_steps", "interrupted", "error"]
+
+INTERRUPTED = ("The user interrupted the previous turn on purpose. If a tool call was cut off, "
+               "it may have partly run: check before repeating it.")
 
 
 class Provider(Protocol):
@@ -109,6 +112,8 @@ class Agent:
                     return self._end("done", steps, usage)
                 self._run_tools(msg.tool_calls)
         except KeyboardInterrupt:
+            # its own event, rendered as a reminder when the history is sent (never an edit)
+            self.log.add_message(Message.system(INTERRUPTED))
             return self._end("interrupted", steps, usage)
         except TarjumanError as e:
             return self._end("error", steps, usage, str(e))
@@ -122,21 +127,20 @@ class Agent:
         while True:
             self.on(StateChanged("thinking"))
             partial: list[Any] = []
+            done: dict[int, tuple[Any, Any]] = {}   # finished blocks: index -> (block, replay entry)
             try:
                 for ev in self.provider.stream(self.model, messages, tools=tools,
                                                max_tokens=self.limits.max_tokens):
                     self.on(ev)
                     _collect(partial, ev)
+                    if isinstance(ev, BlockEnd) and ev.index < len(partial):
+                        done[ev.index] = (ev.block or partial[ev.index], ev.replay)
                     self._check_stop()
                     if isinstance(ev, Finish):
                         return ev.message
                 raise TarjumanError("SERVER_ERROR", "stream ended without a finish")
             except KeyboardInterrupt:
-                # keep what was streamed, flagged, so nothing is lost and the model sees where it stopped
-                kept = [b for b in partial if not isinstance(b, ToolCall) and b.text]
-                if kept:
-                    self.log.add_message(Message("assistant", kept, self.provider.provider,
-                                                 self.model, None, "interrupted"))
+                self._keep_interrupted(partial, done)
                 raise
             except TarjumanError as e:
                 attempt += 1
@@ -148,6 +152,22 @@ class Agent:
                 self.on(Retrying(e, attempt, wait))
                 self.sleep(wait)
                 self._check_stop()
+
+    def _keep_interrupted(self, partial: list[Any], done: dict[int, tuple[Any, Any]]) -> None:
+        """Nothing streamed is lost. Finished blocks (signed, complete) go in `content` and can
+        be sent back as they are; the block cut off mid-stream goes in `partial`: kept in the
+        log, never sent to a model (docs/format.md in tarjuman, decision 4)."""
+        order = sorted(done)
+        content = [done[i][0] for i in order]
+        entries = [done[i][1] for i in order]
+        cut = [b for i, b in enumerate(partial) if i not in done
+               and (b.arguments if isinstance(b, ToolCall) else b.text)]
+        if content or cut:
+            self.log.add_message(Message(
+                "assistant", content, self.provider.provider, self.model, None, "interrupted",
+                getattr(self.provider, "protocol", None),
+                replay=Replay(None, entries) if any(e is not None for e in entries) else None,
+                partial=cut or None))
 
     def _run_tools(self, calls: list[ToolCall]) -> None:
         results: list[ToolResult] = []

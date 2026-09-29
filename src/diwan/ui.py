@@ -134,7 +134,7 @@ class Terminal:
                 self._tool_line(ev.call)
         elif isinstance(ev, ToolFinished):
             r = ev.result
-            lines = r.content.splitlines() or [""]
+            lines = r.text.splitlines() or [""]
             style = "red" if r.is_error else "dim"
             for i, line in enumerate(lines[:TOOL_LINES]):
                 c.print(Text(("  ⎿ " if i == 0 else "    ") + short(line)[:200], style=style))

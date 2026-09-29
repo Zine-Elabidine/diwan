@@ -2,10 +2,11 @@ import json
 
 import pytest
 
-from tarjuman import Message, TarjumanError, Text, ToolCall, ToolResult, Usage
+from tarjuman import (Finish, Message, Reasoning, Replay, TarjumanError, Text, TextDelta,
+                      ToolCall, ToolResult, Usage)
 from tarjuman.fake import Fake
 
-from diwan.agent import Agent, Limits, ToolFinished, TurnEnded
+from diwan.agent import INTERRUPTED, Agent, Limits, ToolFinished, TurnEnded
 from diwan.log import Log
 from diwan.tools import make_tools
 
@@ -48,8 +49,8 @@ def test_tool_loop_writes_and_reads_a_file(tmp_path):
     assert ended.reason == "done" and ended.steps == 3
     assert (tmp_path / "notes/a.txt").read_text() == "one\ntwo"
     results = [e.result for e in events if isinstance(e, ToolFinished)]
-    assert "Created notes/a.txt" in results[0].content
-    assert results[1].content == "     1\tone\n     2\ttwo"
+    assert "Created notes/a.txt" in results[0].text
+    assert results[1].text == "     1\tone\n     2\ttwo"
     # the second request carried the first tool result
     sent = a.provider.requests[1]
     assert sent[0].role == "system" and sent[-1].role == "tool"
@@ -60,7 +61,7 @@ def test_denied_action_is_reported_to_the_model(tmp_path):
                       approve=lambda c, s: False)
     a.turn("clean up")
     tool_msg = [m for m in log.messages() if m.role == "tool"][0]
-    assert tool_msg.content[0].is_error and "denied" in tool_msg.content[0].content
+    assert tool_msg.content[0].is_error and "denied" in tool_msg.content[0].text
     assert any(e.type == "approval" and e.data["allowed"] is False for e in log.events)
 
 
@@ -83,9 +84,9 @@ def test_bad_tool_input_goes_back_as_an_error(tmp_path):
     a.turn("x")
     errors = [b for m in log.messages() if m.role == "tool" for b in m.content]
     assert all(e.is_error for e in errors)
-    assert "Invalid JSON" in errors[0].content
-    assert "Unknown tool" in errors[1].content
-    assert "no such file" in errors[2].content
+    assert "Invalid JSON" in errors[0].text
+    assert "Unknown tool" in errors[1].text
+    assert "no such file" in errors[2].text
 
 
 def test_retries_then_succeeds_and_hides_failures_from_the_model(tmp_path):
@@ -178,13 +179,40 @@ def test_ui_renders_markdown_tools_and_small_costs(tmp_path):
     assert "$0.000069" in out and "session $0.000069" in out
 
 
-def test_interrupt_from_outside_keeps_partial_text(tmp_path):
+def test_interrupt_before_anything_streamed_keeps_only_the_marker(tmp_path):
     a, log, _ = agent(tmp_path, [say("a long answer")])
-    a.on = lambda ev: a.interrupt()          # stop as soon as anything streams
-    ended = a.turn("x")
-    assert ended.reason == "interrupted"
-    assert [m.role for m in log.messages()] == ["user"]      # nothing streamed yet, nothing kept
-    b, log2, _ = agent(tmp_path, [call("bash", command="true"), say("never")])
-    b.on = lambda ev: b.interrupt() if isinstance(ev, TurnEnded) is False and type(ev).__name__ == "Finish" else None
+    a.on = lambda ev: a.interrupt()          # stop as soon as anything happens
+    assert a.turn("x").reason == "interrupted"
+    assert [m.role for m in log.messages()] == ["user", "system"]
+    assert log.messages()[1].text == INTERRUPTED
+
+
+def test_interrupt_after_the_answer_means_the_tool_never_ran(tmp_path):
+    b, log, _ = agent(tmp_path, [call("bash", command="true"), say("never")])
+    b.on = lambda ev: b.interrupt() if isinstance(ev, Finish) else None
     assert b.turn("x").reason == "interrupted"
-    assert not [m for m in log2.messages() if m.role == "tool"]   # the tool never ran
+    assert not [m for m in log.messages() if m.role == "tool"]
+
+
+def test_interrupt_mid_stream_keeps_finished_blocks_signed_and_the_cut_one_apart(tmp_path):
+    answer = Message("assistant", [Reasoning("plan"), Text("Let me look at the tests"),
+                                   ToolCall("c1", "bash", '{"command": "pytest"}')],
+                     replay=Replay(None, ["sig-1", None, None]))
+    fake = Fake([answer, say("ok, the README")])
+    log = Log.new(cwd=str(tmp_path))
+    a = Agent(fake, "fake-model", log, make_tools(tmp_path), "sys", sleep=lambda s: None)
+    a.on = lambda ev: a.interrupt() if isinstance(ev, TextDelta) else None
+    assert a.turn("fix it").reason == "interrupted"
+
+    cut = log.messages()[1]
+    assert cut.stop == "interrupted"
+    assert cut.content == [Reasoning("plan")] and cut.replay.blocks == ["sig-1"]   # finished, signed
+    assert cut.partial == [Text("Let me look at the tests")]                        # kept, never sent
+
+    a.on = lambda ev: None
+    a.turn("no, check the README")
+    sent = fake.requests[-1]
+    assert [m.role for m in sent] == ["system", "user", "assistant", "user", "user"]
+    assert sent[2].content == [Reasoning("plan")] and sent[2].replay.blocks == ["sig-1"]
+    assert INTERRUPTED in sent[3].text and "<system-reminder>" in sent[3].text
+    assert sent[4].text == "no, check the README"

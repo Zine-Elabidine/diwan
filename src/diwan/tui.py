@@ -99,7 +99,7 @@ class ToolView(Vertical):
     def finish(self, result: ToolResult) -> None:
         self.header.update(self._title("✗" if result.is_error else "✓",
                                        "red" if result.is_error else "green"))
-        lines = [short(l) for l in (result.content.splitlines() or [""])]
+        lines = [short(l) for l in (result.text.splitlines() or [""])]
         style = "red" if result.is_error else "dim"
         head = RText("\n".join(l[:300] for l in lines[:PREVIEW_LINES]), style=style)
         self.mount(Static(head, classes="tool-out"))
