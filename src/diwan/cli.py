@@ -44,8 +44,17 @@ def load_env_file() -> None:
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def build_agent(model: str, log: Log, term: Terminal, cwd: Path, base_url: str | None) -> Agent:
-    provider = providers.local(base_url) if base_url else providers.openrouter()
+DEFAULT_MODELS = {"openrouter": DEFAULT_MODEL, "anthropic": "claude-sonnet-5-5"}
+
+
+def build_agent(model: str, log: Log, term: Terminal, cwd: Path, base_url: str | None,
+                provider_name: str = "openrouter") -> Agent:
+    if base_url:
+        provider = providers.local(base_url)
+    elif provider_name == "anthropic":
+        provider = providers.anthropic()
+    else:
+        provider = providers.openrouter()
     return Agent(provider, model, log, make_tools(cwd),
                  system_prompt(cwd, model, provider.provider),
                  approve=term.approve, on=term.on)
@@ -54,7 +63,10 @@ def build_agent(model: str, log: Log, term: Terminal, cwd: Path, base_url: str |
 def main(argv: list[str] | None = None) -> int:
     load_env_file()
     ap = argparse.ArgumentParser(prog="diwan", description="A coding agent that keeps a record of everything.")
-    ap.add_argument("-m", "--model", default=os.environ.get("DIWAN_MODEL", DEFAULT_MODEL))
+    ap.add_argument("-m", "--model", default=os.environ.get("DIWAN_MODEL"))
+    ap.add_argument("--provider", choices=list(DEFAULT_MODELS),
+                    default=os.environ.get("DIWAN_PROVIDER", "openrouter"),
+                    help="openrouter (default) or anthropic (reads ANTHROPIC_API_KEY)")
     ap.add_argument("-p", "--print", dest="prompt", help="run one task and exit")
     ap.add_argument("-r", "--resume", nargs="?", const="last", help="resume the last session here, or a session file")
     ap.add_argument("--base-url", default=os.environ.get("DIWAN_BASE_URL"),
@@ -64,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--plain", action="store_true", help="simple line mode instead of the full-screen app")
     ap.add_argument("--version", action="version", version=f"diwan {__version__}")
     args = ap.parse_args(argv)
+    args.model = args.model or DEFAULT_MODELS[args.provider]
 
     cwd = Path.cwd()
     if args.resume == "last":
@@ -80,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
                     show_reasoning=args.think)
     c = term.console
     try:
-        agent = build_agent(args.model, log, term, cwd, args.base_url)
+        agent = build_agent(args.model, log, term, cwd, args.base_url, args.provider)
     except TarjumanError as e:
         c.print(Text(str(e), style="red"))
         return 1
@@ -94,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         model = args.model
 
         def make_agent(new_log: Log) -> Agent:
-            return build_agent(model, new_log, term, cwd, args.base_url)
+            return build_agent(model, new_log, term, cwd, args.base_url, args.provider)
 
         DiwanApp(make_agent, log, cwd, show_reasoning=args.think).run()
         return 0
@@ -139,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
             c.print(f"[dim]{fmt_usage(agent.total)}[/dim]")
         elif cmd == "/new":
             log = Log.new(cwd=str(cwd), model=agent.model, diwan=__version__)
-            agent = build_agent(agent.model, log, term, cwd, args.base_url)
+            agent = build_agent(agent.model, log, term, cwd, args.base_url, args.provider)
             c.print(f"[dim]new session {log.id}[/dim]")
         else:
             c.print(f"[dim]unknown command {cmd}; /help[/dim]")

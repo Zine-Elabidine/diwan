@@ -19,6 +19,7 @@ diwan -m z-ai/glm-5.3-flash         # any OpenRouter model (default: deepseek/de
 diwan -p "fix the failing test" -y  # one shot, approve everything
 diwan -r                            # resume the last session here
 diwan --base-url http://localhost:8000/v1 -m <model>   # local vLLM / llama.cpp
+diwan --provider anthropic          # Anthropic directly (ANTHROPIC_API_KEY in ~/.diwan/env)
 ```
 
 ## Layout

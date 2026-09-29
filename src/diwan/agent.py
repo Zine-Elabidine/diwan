@@ -11,7 +11,7 @@ from typing import Any, Literal, Protocol
 
 from tarjuman import (BlockEnd, BlockStart, Event, Finish, Message, Reasoning, ReasoningDelta,
                       Replay, TarjumanError, Text, TextDelta, Tool, ToolCall, ToolCallDelta,
-                      ToolResult, Usage)
+                      ToolResult, Unknown, Usage)
 
 from .log import Log
 from .tools import Spec, ToolError
@@ -161,6 +161,7 @@ class Agent:
         content = [done[i][0] for i in order]
         entries = [done[i][1] for i in order]
         cut = [b for i, b in enumerate(partial) if i not in done
+               and not isinstance(b, Unknown)
                and (b.arguments if isinstance(b, ToolCall) else b.text)]
         if content or cut:
             self.log.add_message(Message(
@@ -226,7 +227,8 @@ def _collect(blocks: list[Any], ev: Event) -> None:
     """Rebuild the partial message from stream events (used only if interrupted)."""
     if isinstance(ev, BlockStart):
         blocks.append(ToolCall(ev.id or "", ev.name or "", "") if ev.kind == "tool_call"
-                      else Text("") if ev.kind == "text" else Reasoning(""))
+                      else Text("") if ev.kind == "text"
+                      else Reasoning("") if ev.kind == "reasoning" else Unknown(ev.kind, {}))
     elif isinstance(ev, TextDelta | ReasoningDelta) and ev.index < len(blocks):
         blocks[ev.index].text += ev.text
     elif isinstance(ev, ToolCallDelta) and ev.index < len(blocks):
