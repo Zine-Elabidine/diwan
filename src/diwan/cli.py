@@ -132,7 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     c.print(f"[bold cyan]diwan[/bold cyan] [dim]{__version__} · {ref} · {cwd} · /help[/dim]\n")
     while True:
         try:
-            text = input(PROMPT).strip()
+            text = input(PROMPT if sys.stdout.isatty() else "› ").strip()
         except EOFError:
             print()
             return 0
