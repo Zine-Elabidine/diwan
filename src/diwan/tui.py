@@ -17,14 +17,14 @@ from textual.message import Message as TMessage
 from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Markdown, Static, TextArea, Tree
 
-from tarjuman import (BlockEnd, BlockStart, Finish, Message, ReasoningDelta, TextDelta, ToolCall,
-                      ToolResult, Usage)
+from tarjuman import (BlockEnd, BlockStart, Finish, Message, ReasoningDelta, TarjumanError,
+                      TextDelta, ToolCall, ToolResult, Usage)
 
 from . import __version__
 from .agent import (Agent, Retrying, StateChanged, ToolFinished, ToolStarted, TurnEnded,
                     UIEvent)
 from .log import Log
-from .prompt import system_prompt
+from .models import Ref, Router, describe, listing, switch
 from .tools import Spec
 from .ui import fmt_cost, fmt_tokens, fmt_usage, short, summarize_call
 
@@ -33,7 +33,9 @@ PREVIEW_LINES = 8
 
 HELP = """**Commands**
 
-- `/model <id>` switch model (any OpenRouter id)
+- `/model [provider:]<id>` switch model mid-conversation, even across providers
+  (`anthropic:claude-sonnet-5-5`, `openrouter:z-ai/glm-5.3-flash`)
+- `/models [provider] [text]` models in the catalog, cheapest first
 - `/think` show or hide reasoning (also Ctrl+T)
 - `/cost` tokens and cost for this session
 - `/new` start a new session
@@ -195,13 +197,15 @@ class DiwanApp(App):
         Binding("ctrl+q", "quit", "Quit"),
     ]
 
-    def __init__(self, make_agent: Callable[[Log], Agent], log: Log, cwd: Path, *,
-                 show_reasoning: bool = False, first_prompt: str | None = None):
+    def __init__(self, make_agent: Callable[[Log, Ref], Agent], log: Log, cwd: Path,
+                 router: Router, ref: Ref, *, show_reasoning: bool = False,
+                 first_prompt: str | None = None):
         super().__init__()
         self.make_agent, self.session_log, self.cwd = make_agent, log, cwd
+        self.router, self.ref = router, ref
         self.show_reasoning = show_reasoning
         self.first_prompt = first_prompt
-        self.agent = make_agent(log)
+        self.agent = make_agent(log, ref)
         self.agent.approve = self._approve_from_thread
         self.agent.on = lambda ev: self.call_from_thread(self.handle, ev)
         self.running = False
@@ -237,7 +241,7 @@ class DiwanApp(App):
 
     def _update_top(self) -> None:
         self.query_one("#top", Static).update(RText.assemble(
-            ("diwan ", "bold cyan"), (f"{__version__} · ", "dim"), (self.agent.model, "bold"),
+            ("diwan ", "bold cyan"), (f"{__version__} · ", "dim"), (str(self.ref), "bold"),
             (f" · {self.cwd} · session {self.session_log.id}", "dim")))
 
     def _update_agents(self) -> None:
@@ -320,13 +324,19 @@ class DiwanApp(App):
         elif cmd == "/help":
             self.chat.mount(Markdown(HELP))
         elif cmd == "/model":
-            if rest:
-                self.agent.model = rest
-                self.agent.system = system_prompt(self.cwd, rest, self.agent.provider.provider)
-                self.session_log.append("model", {"model": rest})
-                self._update_top()
-                self._update_agents()
-            self.notify(f"model: {self.agent.model}")
+            if rest and self.running:
+                self.notify("Stop the agent first (Esc).", severity="warning")
+                return
+            try:
+                if rest:
+                    self.ref = switch(self.agent, self.router, rest, self.cwd)
+                    self._update_top()
+                    self._update_agents()
+                self.notify(describe(self.ref))
+            except TarjumanError as e:
+                self.notify(str(e), severity="error")
+        elif cmd == "/models":
+            self.chat.mount(Static("\n".join(listing(rest, self.ref.provider)), classes="tool-out"))
         elif cmd == "/think":
             self.action_toggle_think()
         elif cmd == "/cost":
@@ -335,10 +345,9 @@ class DiwanApp(App):
             if self.running:
                 self.notify("Stop the agent first (Esc).", severity="warning")
                 return
-            self.session_log = Log.new(cwd=str(self.cwd), model=self.agent.model, diwan=__version__)
-            model = self.agent.model
-            self.agent = self.make_agent(self.session_log)
-            self.agent.model = model
+            self.session_log = Log.new(cwd=str(self.cwd), provider=self.ref.provider,
+                                       model=self.ref.model, diwan=__version__)
+            self.agent = self.make_agent(self.session_log, self.ref)
             self.agent.approve = self._approve_from_thread
             self.agent.on = lambda ev: self.call_from_thread(self.handle, ev)
             self.chat.remove_children()

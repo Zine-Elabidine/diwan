@@ -92,3 +92,15 @@ class Log:
     def messages(self) -> list[Message]:
         """The conversation along the current branch."""
         return [Message.from_dict(e.data) for e in self.path_to_head() if e.type == "message"]
+
+    def current_model(self) -> tuple[str | None, str | None]:
+        """(provider, model) in use at the head: the last switch on this branch, else the
+        session's start. Older sessions logged switches as "model" events, without a provider."""
+        start = self.events[0].data if self.events else {}
+        provider, model = start.get("provider"), start.get("model")
+        for e in self.path_to_head():
+            if e.type == "model_switch":
+                provider, model = e.data.get("provider"), e.data.get("model")
+            elif e.type == "model":
+                model = e.data.get("model")
+        return provider, model

@@ -7,6 +7,7 @@ from tarjuman.fake import Fake
 
 from diwan.agent import Agent
 from diwan.log import Log
+from diwan.models import Ref, Router
 from diwan.tools import make_tools
 from diwan.tui import Approval, DiwanApp, ToolView, UserMsg
 
@@ -17,9 +18,10 @@ def home(tmp_path, monkeypatch):
 
 
 def make_app(tmp_path, script):
-    def make_agent(log):
-        return Agent(Fake(script), "deepseek/deepseek-v4-flash", log, make_tools(tmp_path), "sys")
-    return DiwanApp(make_agent, Log.new(cwd=str(tmp_path)), tmp_path)
+    def make_agent(log, ref):
+        return Agent(Fake(script), ref.model, log, make_tools(tmp_path), "sys")
+    return DiwanApp(make_agent, Log.new(cwd=str(tmp_path)), tmp_path, Router("openrouter"),
+                    Ref("openrouter", "deepseek/deepseek-v4-flash"))
 
 
 async def wait_idle(pilot, app):
@@ -73,7 +75,8 @@ async def test_denied_and_history_replay(tmp_path):
 
     # reopening the same session shows the earlier conversation
     log = Log.load(app.session_log.path)
-    again = DiwanApp(lambda l: Agent(Fake([]), "m", l, make_tools(tmp_path), "sys"), log, tmp_path)
+    again = DiwanApp(lambda l, r: Agent(Fake([]), "m", l, make_tools(tmp_path), "sys"), log, tmp_path,
+                     Router("openrouter"), Ref("openrouter", "m"))
     async with again.run_test(size=(100, 30)) as pilot:
         await pilot.pause(0.2)
         assert len(again.query(UserMsg)) == 1 and len(again.query(ToolView)) == 1

@@ -9,19 +9,23 @@ from pathlib import Path
 
 from rich.text import Text
 
-from tarjuman import TarjumanError
-from tarjuman import Anthropic, providers
+from tarjuman import TarjumanError, providers
 
 from . import __version__
 from .agent import Agent
 from .log import Log
+from .models import Ref, Router, describe, listing, switch
 from .prompt import system_prompt
 from .tools import make_tools
 from .ui import Terminal, fmt_usage
 
-DEFAULT_MODEL = "deepseek/deepseek-v4-flash"
+# the model used when none is given, per provider ("local" has none: say which with -m)
+DEFAULT_MODELS = {"openrouter": "deepseek/deepseek-v4-flash", "anthropic": "claude-sonnet-5-5",
+                  "deepseek": "deepseek-v4-flash", "openai": "gpt-5"}
 
-HELP = """[bold]/model[/bold] <id>   switch model (any OpenRouter id, e.g. z-ai/glm-5.3-flash)
+HELP = """[bold]/model[/bold] [provider:]<id>   switch model, even across providers, mid-conversation
+                       (anthropic:claude-sonnet-5-5, openrouter:z-ai/glm-5.3-flash, deepseek:...)
+[bold]/models[/bold] [provider] [text]  models in the catalog, cheapest first
 [bold]/think[/bold]        show or hide the model's reasoning
 [bold]/cost[/bold]         tokens and cost for this session
 [bold]/new[/bold]          start a new session
@@ -44,45 +48,49 @@ def load_env_file() -> None:
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-DEFAULT_MODELS = {"openrouter": DEFAULT_MODEL, "anthropic": "claude-sonnet-5-5"}
-
-
-def build_agent(model: str, log: Log, term: Terminal, cwd: Path, base_url: str | None,
-                provider_name: str = "openrouter") -> Agent:
-    if provider_name == "anthropic":
-        # with --base-url: an Anthropic-compatible gateway (Bifrost, a proxy); it may need no key
-        provider = (Anthropic(os.environ.get("ANTHROPIC_API_KEY"), base_url=base_url,
-                              provider="anthropic-gateway")
-                    if base_url else providers.anthropic())
-    elif base_url:
-        provider = providers.local(base_url)
-    else:
-        provider = providers.openrouter()
-    return Agent(provider, model, log, make_tools(cwd),
-                 system_prompt(cwd, model, provider.provider),
+def build_agent(ref: Ref, log: Log, term: Terminal, cwd: Path, router: Router) -> Agent:
+    client = router.client(ref.provider)
+    return Agent(client, ref.model, log, make_tools(cwd),
+                 system_prompt(cwd, ref.model, client.provider),
                  approve=term.approve, on=term.on)
+
+
+def start_ref(args: argparse.Namespace, log: Log | None, router: Router) -> Ref:
+    """The model to start on: -m, else the one a resumed session was last using, else the
+    provider's default."""
+    if args.model:
+        return router.ref(args.model)
+    if log is not None:
+        provider, model = log.current_model()
+        if model:
+            return Ref(provider or router.default, model)
+    model = DEFAULT_MODELS.get(router.default)
+    if model is None:
+        raise TarjumanError("INVALID_REQUEST", f"say which model {router.default} should run: -m <id>")
+    return Ref(router.default, model)
 
 
 def main(argv: list[str] | None = None) -> int:
     load_env_file()
     ap = argparse.ArgumentParser(prog="diwan", description="A coding agent that keeps a record of everything.")
-    ap.add_argument("-m", "--model", default=os.environ.get("DIWAN_MODEL"))
-    ap.add_argument("--provider", choices=list(DEFAULT_MODELS),
-                    default=os.environ.get("DIWAN_PROVIDER", "openrouter"),
-                    help="openrouter (default) or anthropic (reads ANTHROPIC_API_KEY)")
+    ap.add_argument("-m", "--model", default=os.environ.get("DIWAN_MODEL"),
+                    help="[provider:]model, e.g. anthropic:claude-sonnet-5-5")
+    ap.add_argument("--provider", choices=providers.names(), default=os.environ.get("DIWAN_PROVIDER"),
+                    help="the provider for model ids without a prefix (default: openrouter, "
+                         "or local with --base-url)")
     ap.add_argument("-p", "--print", dest="prompt", help="run one task and exit")
     ap.add_argument("-r", "--resume", nargs="?", const="last", help="resume the last session here, or a session file")
     ap.add_argument("--base-url", default=os.environ.get("DIWAN_BASE_URL"),
-                    help="a server instead of OpenRouter: OpenAI-compatible (vLLM, llama.cpp, "
-                         "a gateway such as Bifrost), or Anthropic-compatible with --provider anthropic")
+                    help="point the provider elsewhere: an OpenAI-compatible server (vLLM, llama.cpp, "
+                         "a gateway such as Bifrost), or an Anthropic-compatible one with --provider anthropic")
     ap.add_argument("-y", "--yes", action="store_true", help="approve every tool call")
     ap.add_argument("--think", action="store_true", help="show the model's reasoning")
     ap.add_argument("--plain", action="store_true", help="simple line mode instead of the full-screen app")
     ap.add_argument("--version", action="version", version=f"diwan {__version__}")
     args = ap.parse_args(argv)
-    args.model = args.model or DEFAULT_MODELS[args.provider]
 
     cwd = Path.cwd()
+    log: Log | None = None
     if args.resume == "last":
         log = Log.latest(str(cwd))
         if log is None:
@@ -90,14 +98,16 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     elif args.resume:
         log = Log.load(Path(args.resume).expanduser())
-    else:
-        log = Log.new(cwd=str(cwd), model=args.model, diwan=__version__)
 
+    router = Router(args.provider or ("local" if args.base_url else "openrouter"), args.base_url)
     term = Terminal(auto_approve=args.yes, interactive=args.prompt is None,
                     show_reasoning=args.think)
     c = term.console
     try:
-        agent = build_agent(args.model, log, term, cwd, args.base_url, args.provider)
+        ref = start_ref(args, log, router)
+        if log is None:
+            log = Log.new(cwd=str(cwd), provider=ref.provider, model=ref.model, diwan=__version__)
+        agent = build_agent(ref, log, term, cwd, router)
     except TarjumanError as e:
         c.print(Text(str(e), style="red"))
         return 1
@@ -108,20 +118,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.plain and sys.stdin.isatty() and sys.stdout.isatty():
         from .tui import DiwanApp
-        model = args.model
 
-        def make_agent(new_log: Log) -> Agent:
-            return build_agent(model, new_log, term, cwd, args.base_url, args.provider)
+        def make_agent(new_log: Log, at: Ref) -> Agent:
+            return build_agent(at, new_log, term, cwd, router)
 
-        DiwanApp(make_agent, log, cwd, show_reasoning=args.think).run()
+        DiwanApp(make_agent, log, cwd, router, ref, show_reasoning=args.think).run()
         return 0
 
     try:
         import readline  # noqa: F401  line editing and history for input()
     except ImportError:
         pass
-    c.print(f"[bold cyan]diwan[/bold cyan] [dim]{__version__} · {args.model} · "
-            f"{cwd} · /help[/dim]\n")
+    c.print(f"[bold cyan]diwan[/bold cyan] [dim]{__version__} · {ref} · {cwd} · /help[/dim]\n")
     while True:
         try:
             text = input(PROMPT).strip()
@@ -144,19 +152,22 @@ def main(argv: list[str] | None = None) -> int:
         elif cmd == "/help":
             c.print(HELP)
         elif cmd == "/model":
-            if rest:
-                agent.model = rest
-                agent.system = system_prompt(cwd, rest, agent.provider.provider)
-                log.append("model", {"model": rest})
-            c.print(f"[dim]model: {agent.model}[/dim]")
+            try:
+                if rest:
+                    ref = switch(agent, router, rest, cwd)
+                c.print(Text(describe(ref), style="dim"))
+            except TarjumanError as e:
+                c.print(Text(str(e), style="red"))
+        elif cmd == "/models":
+            c.print(Text("\n".join(listing(rest, ref.provider)), style="dim"))
         elif cmd == "/think":
             term.show_reasoning = not term.show_reasoning
             c.print(f"[dim]reasoning {'shown' if term.show_reasoning else 'hidden'}[/dim]")
         elif cmd == "/cost":
             c.print(f"[dim]{fmt_usage(agent.total)}[/dim]")
         elif cmd == "/new":
-            log = Log.new(cwd=str(cwd), model=agent.model, diwan=__version__)
-            agent = build_agent(agent.model, log, term, cwd, args.base_url, args.provider)
+            log = Log.new(cwd=str(cwd), provider=ref.provider, model=ref.model, diwan=__version__)
+            agent = build_agent(ref, log, term, cwd, router)
             c.print(f"[dim]new session {log.id}[/dim]")
         else:
             c.print(f"[dim]unknown command {cmd}; /help[/dim]")

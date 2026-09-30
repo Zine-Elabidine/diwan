@@ -85,6 +85,17 @@ class Agent:
         self.total = Usage()
         self._stop = threading.Event()
 
+    def use(self, provider: Provider, model: str, system: str) -> None:
+        """Continue the same conversation on another model, maybe through another provider.
+        Tarjuman adapts the history on the next request (docs/format.md in tarjuman)."""
+        if (provider.provider, model) == (self.provider.provider, self.model):
+            return
+        self.provider, self.model, self.system = provider, model, system
+        self.log.append("model_switch", {"provider": provider.provider, "model": model})
+        self.log.add_message(Message.system(
+            f"The conversation now continues on `{model}` (via {provider.provider}). Earlier "
+            "replies may have been written by other models."))
+
     def interrupt(self) -> None:
         """Ask a running turn to stop (safe from any thread). It stops at the next event,
         tool boundary or retry wait, keeping everything produced so far."""
