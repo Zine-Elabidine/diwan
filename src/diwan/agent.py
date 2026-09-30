@@ -3,13 +3,11 @@ plus the tools it asked for. Every step, tool result, retry and ending is logged
 
 from __future__ import annotations
 
-import threading
-import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-from tarjuman import (BlockEnd, BlockStart, Event, Finish, Message, Reasoning, ReasoningDelta,
+from tarjuman import (BlockEnd, BlockStart, Cancel, Event, Finish, Message, Reasoning, ReasoningDelta,
                       Replay, TarjumanError, Text, TextDelta, Tool, ToolCall, ToolCallDelta,
                       ToolResult, Unknown, Usage)
 
@@ -27,7 +25,7 @@ class Provider(Protocol):
     provider: str
 
     def stream(self, model: str, messages: list[Message], *, tools: list[Tool] | None = ...,
-               max_tokens: int | None = ...) -> Any: ...
+               max_tokens: int | None = ..., cancel: Cancel | None = ...) -> Any: ...
 
 
 # --- what the loop tells the UI ---------------------------------------------------------------
@@ -77,13 +75,13 @@ class Agent:
     def __init__(self, provider: Provider, model: str, log: Log, tools: dict[str, Spec],
                  system: str, *, approve: Callable[[ToolCall, Spec], bool] = lambda c, s: True,
                  on: Callable[[UIEvent], None] = lambda e: None, limits: Limits | None = None,
-                 sleep: Callable[[float], None] = time.sleep):
+                 sleep: Callable[[float], None] | None = None):
         self.provider, self.model, self.log, self.tools = provider, model, log, tools
         self.system, self.approve, self.on = system, approve, on
         self.limits = limits or Limits()
-        self.sleep = sleep
+        self.sleep = sleep  # for tests; by default retry waits end early on interrupt
         self.total = Usage()
-        self._stop = threading.Event()
+        self._cancel = Cancel()
 
     def use(self, provider: Provider, model: str, system: str) -> None:
         """Continue the same conversation on another model, maybe through another provider.
@@ -97,20 +95,23 @@ class Agent:
             "replies may have been written by other models."))
 
     def interrupt(self) -> None:
-        """Ask a running turn to stop (safe from any thread). It stops at the next event,
-        tool boundary or retry wait, keeping everything produced so far."""
-        self._stop.set()
+        """Stop the running turn now (safe from any thread). One signal reaches everything the
+        turn is doing: the model stream is closed (the provider stops generating), a running
+        command is killed with everything it started, a retry wait ends. Everything produced
+        so far is kept."""
+        self._cancel.cancel()
 
     def _check_stop(self) -> None:
-        if self._stop.is_set():
+        if self._cancel.cancelled:
             raise KeyboardInterrupt
 
     def turn(self, text: str) -> TurnEnded:
-        self._stop.clear()
+        self._cancel = Cancel()
         self.log.add_message(Message.user(text))
         steps, usage = 0, Usage()
         try:
             while True:
+                self._check_stop()
                 if steps >= self.limits.max_steps:
                     return self._end("max_steps", steps, usage)
                 steps += 1
@@ -141,7 +142,8 @@ class Agent:
             done: dict[int, tuple[Any, Any]] = {}   # finished blocks: index -> (block, replay entry)
             try:
                 for ev in self.provider.stream(self.model, messages, tools=tools,
-                                               max_tokens=self.limits.max_tokens):
+                                               max_tokens=self.limits.max_tokens,
+                                               cancel=self._cancel):
                     self.on(ev)
                     _collect(partial, ev)
                     if isinstance(ev, BlockEnd) and ev.index < len(partial):
@@ -154,6 +156,9 @@ class Agent:
                 self._keep_interrupted(partial, done)
                 raise
             except TarjumanError as e:
+                if e.code == "CANCELLED":
+                    self._keep_interrupted(partial, done)
+                    raise KeyboardInterrupt from None
                 attempt += 1
                 # failed attempts are logged but never become part of the conversation
                 self.log.append("error", {"code": e.code, "message": e.message, "attempt": attempt})
@@ -161,7 +166,10 @@ class Agent:
                     raise
                 wait = e.retry_after or min(2 ** attempt, 30)
                 self.on(Retrying(e, attempt, wait))
-                self.sleep(wait)
+                if self.sleep:
+                    self.sleep(wait)
+                else:
+                    self._cancel.wait(wait)
                 self._check_stop()
 
     def _keep_interrupted(self, partial: list[Any], done: dict[int, tuple[Any, Any]]) -> None:
@@ -214,7 +222,8 @@ class Agent:
         self.on(StateChanged("running"))
         self.on(ToolStarted(call))
         try:
-            result = ToolResult(call.id, spec.run(**args))
+            extra = {"cancel": self._cancel} if spec.cancellable else {}
+            result = ToolResult(call.id, spec.run(**args, **extra))
         except ToolError as e:
             result = ToolResult(call.id, str(e), True)
         except TypeError as e:
