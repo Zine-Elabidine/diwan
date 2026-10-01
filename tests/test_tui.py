@@ -76,8 +76,21 @@ async def test_denied_and_history_replay(tmp_path):
         assert len(again.query(UserMsg)) == 1 and len(again.query(ToolView)) == 1
 
 
+def _waiting_on_an_approval() -> bool:
+    """True while some thread is still inside the app's approval wait."""
+    import sys
+    for top in sys._current_frames().values():
+        frame = top
+        while frame is not None:
+            if frame.f_code.co_name == "_approve_from_thread":
+                return True
+            frame = frame.f_back
+    return False
+
+
 async def test_quitting_during_an_approval_lets_the_agent_thread_end(tmp_path):
     # before the fix, the agent thread waited forever on the dialog and the process never exited
+    import time
     app = make_app(tmp_path, [Message("assistant", [ToolCall(
         "c1", "write", json.dumps({"path": "a.txt", "content": "x"}))])])
     async with app.run_test() as pilot:
@@ -86,8 +99,10 @@ async def test_quitting_during_an_approval_lets_the_agent_thread_end(tmp_path):
             await pilot.pause(0.05)
             if isinstance(app.screen, Approval):
                 break
-        assert isinstance(app.screen, Approval)
+        assert isinstance(app.screen, Approval) and _waiting_on_an_approval()
         await pilot.press("ctrl+q")
-    for worker in app.workers:
-        await worker.wait()                          # returns: the thread was released
+    deadline = time.monotonic() + 3
+    while _waiting_on_an_approval() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not _waiting_on_an_approval()             # the agent thread was released
     assert not (tmp_path / "a.txt").exists()         # and the pending write was refused
