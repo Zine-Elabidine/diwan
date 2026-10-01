@@ -93,6 +93,24 @@ class Log:
         """The conversation along the current branch."""
         return [Message.from_dict(e.data) for e in self.path_to_head() if e.type == "message"]
 
+    def masked(self) -> dict[str, str]:
+        """What earlier "mask" events on this branch cleared (see context.py)."""
+        out: dict[str, str] = {}
+        for e in self.path_to_head():
+            if e.type == "mask":
+                out.update(e.data["entries"])
+        return out
+
+    def mask_points(self) -> list[int]:
+        """For each "mask" event on this branch, how many messages came before it."""
+        points, n = [], 0
+        for e in self.path_to_head():
+            if e.type == "message":
+                n += 1
+            elif e.type == "mask":
+                points.append(n)
+        return points
+
     def current_model(self) -> tuple[str | None, str | None]:
         """(provider, model) in use at the head: the last switch on this branch, else the
         session's start. Older sessions logged switches as "model" events, without a provider."""

@@ -12,7 +12,7 @@ from rich.text import Text
 from tarjuman import TarjumanError, providers
 
 from . import __version__
-from .agent import Agent
+from .agent import Agent, Limits
 from .log import Log
 from .models import Ref, Router, describe, listing, switch
 from .prompt import system_prompt
@@ -48,11 +48,12 @@ def load_env_file() -> None:
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def build_agent(ref: Ref, log: Log, term: Terminal, cwd: Path, router: Router) -> Agent:
+def build_agent(ref: Ref, log: Log, term: Terminal, cwd: Path, router: Router,
+                limits: Limits | None = None) -> Agent:
     client = router.client(ref.provider)
     return Agent(client, ref.model, log, make_tools(cwd),
                  system_prompt(cwd, ref.model, client.provider),
-                 approve=term.approve, on=term.on)
+                 approve=term.approve, on=term.on, limits=limits)
 
 
 def start_ref(args: argparse.Namespace, log: Log | None, router: Router) -> Ref:
@@ -86,8 +87,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("-y", "--yes", action="store_true", help="approve every tool call")
     ap.add_argument("--think", action="store_true", help="show the model's reasoning")
     ap.add_argument("--plain", action="store_true", help="simple line mode instead of the full-screen app")
+    ap.add_argument("--context", type=int, metavar="TOKENS",
+                    help="cap the context window (also used when a model's window is unknown)")
     ap.add_argument("--version", action="version", version=f"diwan {__version__}")
     args = ap.parse_args(argv)
+    limits = Limits(context=args.context)
 
     cwd = Path.cwd()
     log: Log | None = None
@@ -107,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         ref = start_ref(args, log, router)
         if log is None:
             log = Log.new(cwd=str(cwd), provider=ref.provider, model=ref.model, diwan=__version__)
-        agent = build_agent(ref, log, term, cwd, router)
+        agent = build_agent(ref, log, term, cwd, router, limits)
     except TarjumanError as e:
         c.print(Text(str(e), style="red"))
         return 1
@@ -120,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
         from .tui import DiwanApp
 
         def make_agent(new_log: Log, at: Ref) -> Agent:
-            return build_agent(at, new_log, term, cwd, router)
+            return build_agent(at, new_log, term, cwd, router, limits)
 
         DiwanApp(make_agent, log, cwd, router, ref, show_reasoning=args.think).run()
         return 0
@@ -167,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
             c.print(f"[dim]{fmt_usage(agent.total)}[/dim]")
         elif cmd == "/new":
             log = Log.new(cwd=str(cwd), provider=ref.provider, model=ref.model, diwan=__version__)
-            agent = build_agent(ref, log, term, cwd, router)
+            agent = build_agent(ref, log, term, cwd, router, limits)
             c.print(f"[dim]new session {log.id}[/dim]")
         else:
             c.print(f"[dim]unknown command {cmd}; /help[/dim]")

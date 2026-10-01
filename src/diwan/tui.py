@@ -22,8 +22,8 @@ from tarjuman import (BlockEnd, BlockStart, Finish, Message, ReasoningDelta, Tar
                       TextDelta, ToolCall, ToolResult, Usage)
 
 from . import __version__
-from .agent import (Agent, Retrying, StateChanged, ToolFinished, ToolStarted, TurnEnded,
-                    UIEvent)
+from .agent import (Agent, ContextCleared, Retrying, StateChanged, ToolFinished, ToolStarted,
+                    TurnEnded, UIEvent)
 from .log import Log
 from .models import Ref, Router, describe, listing, switch
 from .tools import Spec
@@ -441,6 +441,8 @@ class DiwanApp(App):
                 await self._add(view)
             view.finish(ev.result)
             self._follow()
+        elif isinstance(ev, ContextCleared):
+            await self._add(Static(f"↺ {ev.text}; the log keeps them", classes="notice"))
         elif isinstance(ev, Retrying):
             await self._add(Static(f"{ev.error.code}, retrying in {ev.wait:.0f}s "
                                    f"(attempt {ev.attempt})", classes="notice"))

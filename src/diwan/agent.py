@@ -7,11 +7,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-from tarjuman import limits
+from tarjuman import limits as tokens
 from tarjuman import (BlockEnd, BlockStart, Cancel, Event, Finish, Message, Reasoning, ReasoningDelta,
                       Replay, TarjumanError, Text, TextDelta, Tool, ToolCall, ToolCallDelta,
                       ToolResult, Unknown, Usage)
 
+from . import context as ctx
 from .log import Log
 from .tools import Spec, ToolError
 
@@ -77,6 +78,12 @@ class ContextChanged:
 
 
 @dataclass
+class ContextCleared:
+    """Old tool outputs were cleared to save context (the log keeps them)."""
+    text: str
+
+
+@dataclass
 class TurnEnded:
     reason: Reason
     steps: int
@@ -85,7 +92,7 @@ class TurnEnded:
 
 
 UIEvent = (StateChanged | ToolStarted | ToolFinished | Retrying | TurnEnded | ContextChanged
-           | Event)
+           | ContextCleared | Event)
 
 
 @dataclass
@@ -93,6 +100,7 @@ class Limits:
     max_steps: int = 60
     max_tokens: int = 16_000
     max_retries: int = 4
+    context: int | None = None   # cap on the context window (also used when it is unknown)
 
 
 class Agent:
@@ -106,6 +114,7 @@ class Agent:
         self.sleep = sleep  # for tests; by default retry waits end early on interrupt
         self.total = Usage()
         self._cancel = Cancel()
+        self._ratio = tokens.CHARS_PER_TOKEN   # the current model's chars per token, from context()
         self.context_use = self.context()
 
     def use(self, provider: Provider, model: str, system: str) -> None:
@@ -134,7 +143,7 @@ class Agent:
         at a chars-per-token ratio calibrated on that report. With no report from this model
         (a new session, or right after /model) the whole history is estimated."""
         provider, model = provider or self.provider, model or self.model
-        request = [Message.system(self.system), *self.log.messages()]
+        request = [Message.system(self.system), *self._view()]
         tools = [s.tool for s in self.tools.values()]
         used, exact, borrowed = None, False, None
         for i in range(len(request) - 1, 0, -1):
@@ -142,25 +151,33 @@ class Agent:
             prompt = (m.usage.input + m.usage.cache_read + m.usage.cache_write) if m.usage else 0
             if m.role != "assistant" or not prompt:
                 continue
-            ratio = limits.ratio(request[:i], tools, prompt)
+            ratio = tokens.ratio(request[:i], tools, prompt)
             if m.model != model or m.provider != provider.provider:
                 borrowed = borrowed or ratio   # the most recent other model's, as a fallback
                 continue
+            ratio = ratio or tokens.CHARS_PER_TOKEN
+            if any(point >= i for point in self.log.mask_points()):
+                # outputs were cleared after this report: the reported count is too high now
+                used = tokens.estimate(request, tools, ratio)
+                break
             after = request[i + 1:]
-            used = prompt + m.usage.output + (
-                limits.estimate(after, None, ratio or limits.CHARS_PER_TOKEN) if after else 0)
+            used = prompt + m.usage.output + (tokens.estimate(after, None, ratio) if after else 0)
             exact = not after
             break
         if used is None:
             # no report from this model: the same text measured on another model, plus a margin
             # for a different tokenizer; else the default
-            ratio = min(borrowed * OTHER_TOKENIZER, limits.CHARS_PER_TOKEN) if borrowed \
-                else limits.CHARS_PER_TOKEN
-            used = limits.estimate(request, tools, ratio)
+            ratio = min(borrowed * OTHER_TOKENIZER, tokens.CHARS_PER_TOKEN) if borrowed \
+                else tokens.CHARS_PER_TOKEN
+            used = tokens.estimate(request, tools, ratio)
         window = _ask(provider, "context_window", model)
+        if self.limits.context:
+            window = min(window, self.limits.context) if window else self.limits.context
         info = _ask(provider, "info", model)
         reserve = min(self.limits.max_tokens, info.max_output) if info and info.max_output \
             else self.limits.max_tokens
+        if (provider, model) == (self.provider, self.model):
+            self._ratio = ratio
         return ContextUse(used, window, max(window - reserve, 0) if window else None, exact)
 
     def _context_changed(self) -> None:
@@ -206,8 +223,25 @@ class Agent:
 
     # --- steps ---------------------------------------------------------------------------------
 
+    def _view(self) -> list[Message]:
+        """The conversation as the model sees it: the log's messages, with cleared outputs."""
+        return ctx.apply(self.log.messages(), self.log.masked())
+
+    def _maybe_clear(self) -> None:
+        """Clear old tool outputs once the context is half full (context.py)."""
+        use = self.context_use
+        if not use.usable or (use.fraction or 0) < ctx.MASK_AT:
+            return
+        p = ctx.plan(self.log.messages(), self.log.masked(), use.usable, self._ratio)
+        if p is None:
+            return
+        self.log.append("mask", {"entries": p.entries, "saved": p.saved})
+        self.on(ContextCleared(ctx.saved_text(p)))
+        self._context_changed()
+
     def _sample(self) -> Message:
-        messages = [Message.system(self.system), *self.log.messages()]
+        self._maybe_clear()
+        messages = [Message.system(self.system), *self._view()]
         tools = [s.tool for s in self.tools.values()]
         attempt = 0
         while True:

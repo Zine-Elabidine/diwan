@@ -14,8 +14,8 @@ from rich.text import Text
 
 from tarjuman import BlockStart, ReasoningDelta, TextDelta, ToolCall, ToolCallDelta, Usage
 
-from .agent import (ContextChanged, ContextUse, Retrying, StateChanged, ToolFinished, ToolStarted, TurnEnded,
-                    UIEvent)
+from .agent import (ContextChanged, ContextCleared, ContextUse, Retrying, StateChanged,
+                    ToolFinished, ToolStarted, TurnEnded, UIEvent)
 from .tools import Spec
 
 TOOL_LINES = 4
@@ -161,6 +161,8 @@ class Terminal:
                 c.print(Text(f"    … {len(lines) - TOOL_LINES} more lines", style="dim"))
         elif isinstance(ev, ContextChanged):
             self.context = ev.context
+        elif isinstance(ev, ContextCleared):
+            c.print(Text(f"  ↺ {ev.text}; the log keeps them", style="dim"))
         elif isinstance(ev, Retrying):
             c.print(Text(f"  {ev.error.code}, retrying in {ev.wait:.0f}s (attempt {ev.attempt})",
                          style="yellow"))
