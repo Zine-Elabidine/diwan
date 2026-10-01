@@ -109,7 +109,8 @@ class Limits:
 
 class Agent:
     def __init__(self, provider: Provider, model: str, log: Log, tools: dict[str, Spec],
-                 system: str, *, approve: Callable[[ToolCall, Spec], bool] = lambda c, s: True,
+                 system: str, *,
+                 approve: Callable[[ToolCall, Spec, bool], bool] = lambda c, s, outside: True,
                  on: Callable[[UIEvent], None] = lambda e: None, limits: Limits | None = None,
                  sleep: Callable[[float], None] | None = None, paths: PathPolicy | None = None):
         self.provider, self.model, self.log, self.tools = provider, model, log, tools
@@ -340,7 +341,8 @@ class Agent:
             return result
         if not spec.readonly or needed is Access.ASK:
             self.on(StateChanged("waiting"))
-            allowed = self.approve(call, spec)
+            # `outside`: the call reaches beyond the project; "always" approvals don't cover it
+            allowed = self.approve(call, spec, needed is Access.ASK)
             self.log.append("approval", {"call_id": call.id, "allowed": allowed})
             if not allowed:
                 result = ToolResult(call.id, "The user denied this action. Ask them how to "

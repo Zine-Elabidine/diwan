@@ -192,28 +192,32 @@ class Terminal:
 
     # --- approvals --------------------------------------------------------------------------
 
-    def approve(self, call: ToolCall, spec: Spec) -> bool:
+    def approve(self, call: ToolCall, spec: Spec, outside: bool = False) -> bool:
+        """`outside`: the call reaches beyond the project. "Always" never covers that: it asks
+        every time (unless -y)."""
         self._flush()
         self._tool_line(call)
         self._shown = call.id
+        if outside:
+            self.console.print(Text("    outside the project", style="yellow"))
         if call.name in ("write", "edit"):
             self._preview(call)
-        if self.auto or call.name in self.always:
+        if self.auto or (call.name in self.always and not outside):
             return True
         if not self.interactive:
             return False
+        always = "" if outside else f" / [bold]a[/bold]lways {call.name}"
         while True:
             try:
                 answer = self.console.input(
-                    f"  [dim]allow?[/dim] [bold]y[/bold]es / [bold]n[/bold]o / "
-                    f"[bold]a[/bold]lways {call.name} › ").strip().lower()
+                    f"  [dim]allow?[/dim] [bold]y[/bold]es / [bold]n[/bold]o{always} › ").strip().lower()
             except EOFError:
                 return False
             if answer in ("y", "yes", ""):
                 return True
             if answer in ("n", "no"):
                 return False
-            if answer in ("a", "always"):
+            if answer in ("a", "always") and not outside:
                 self.always.add(call.name)
                 return True
 

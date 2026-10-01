@@ -223,7 +223,8 @@ def make_tools(cwd: Path, policy: PathPolicy | None = None) -> dict[str, Spec]:
         base = resolve(path)
         if not base.exists():
             raise ToolError(f"{path} does not exist")
-        found = [f for f in _files(base) if _matches(f.relative_to(base), pattern)]
+        found = [f for f in _files(base) if _matches(f.relative_to(base), pattern)
+                 and not policy.secret(f.resolve())]
         if not found:
             return f"No files match {pattern!r} under {path}"
         found.sort(key=lambda f: f.stat().st_mtime, reverse=True)  # recently changed first
@@ -245,6 +246,8 @@ def make_tools(cwd: Path, policy: PathPolicy | None = None) -> dict[str, Spec]:
         hits = files_hit = 0
         for f in _files(base):
             if glob and not _matches(f.relative_to(base) if base.is_dir() else Path(f.name), glob):
+                continue
+            if f != base and not policy.searchable(f):   # secrets, .env files, links to them
                 continue
             try:
                 if f.stat().st_size > MAX_FILE:

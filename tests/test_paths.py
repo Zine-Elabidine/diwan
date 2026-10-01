@@ -1,6 +1,10 @@
 """Where the file tools may reach: inside the project freely, outside after approval,
 credentials never."""
 
+import sys
+
+import pytest
+
 from tarjuman.fake import Fake
 
 from diwan.agent import Agent
@@ -49,7 +53,7 @@ def run_read(tmp_path, path, approve):
     asked = []
     log = Log.new(cwd=str(project))
     a = Agent(Fake([call("read", path=path(home)), say("ok")]), "m", log, make_tools(project, p),
-              "sys", approve=lambda c, s: asked.append(c.name) or approve, paths=p)
+              "sys", approve=lambda c, s, outside: asked.append(c.name) or approve, paths=p)
     a.turn("go")
     result = next(m for m in log.messages() if m.role == "tool").content[0]
     return asked, result
@@ -71,3 +75,27 @@ def test_secrets_are_refused_without_asking(tmp_path):
 def test_reading_inside_the_project_never_asks(tmp_path):
     asked, _result = run_read(tmp_path, lambda home: "src", approve=False)
     assert asked == []
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+def test_grep_skips_files_the_policy_blocks(tmp_path):
+    p, project, home = policy(tmp_path)
+    (project / "innocent").symlink_to(home / ".diwan" / "env")
+    (project / ".env").write_text("OPENROUTER_API_KEY=also-secret")
+    (project / "src" / "a.py").write_text("OPENROUTER_API_KEY = os.environ[...]")
+    out = make_tools(project, p)["grep"].run(pattern="OPENROUTER")
+    assert "src/a.py" in out
+    assert "KEY=secret" not in out and "also-secret" not in out
+    assert {line.split(":")[0] for line in out.splitlines()} == {"src/a.py"}
+
+
+def test_always_covers_the_project_only(tmp_path):
+    p, project, home = policy(tmp_path)
+    asked = []
+    log = Log.new(cwd=str(project))
+    a = Agent(Fake([call("write", path="in.txt", content="1"),
+                    call("write", cid="c2", path=str(home / "out.txt"), content="2"), say("ok")]),
+              "m", log, make_tools(project, p), "sys", paths=p,
+              approve=lambda c, s, outside: asked.append((c.name, outside)) or True)
+    a.turn("go")
+    assert asked == [("write", False), ("write", True)]   # the second call says it's outside

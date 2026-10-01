@@ -36,11 +36,25 @@ class PathPolicy:
 
     def check(self, path: str) -> Access:
         real = self.resolve(path)
-        if any(real == s or real.is_relative_to(s) for s in self.secrets):
+        if self.secret(real):
             return Access.DENIED
-        if real.name == ".env" or real.name.startswith(".env."):
+        if env_file(real):
             return Access.ASK
         return Access.INSIDE if real.is_relative_to(self.project) else Access.ASK
 
+    def secret(self, real: Path) -> bool:
+        """A resolved path inside a place that holds credentials."""
+        return any(real == s or real.is_relative_to(s) for s in self.secrets)
+
+    def searchable(self, path: Path) -> bool:
+        """Whether a search (grep, glob) may look at this file: never a secret place, and grep
+        never reads a .env file without the user asking for that file by name."""
+        real = path.resolve()
+        return not self.secret(real) and not env_file(real)
+
     def why(self, path: str) -> str:
         return f"{path} holds credentials; tools never read or write it"
+
+
+def env_file(p: Path) -> bool:
+    return p.name == ".env" or p.name.startswith(".env.")

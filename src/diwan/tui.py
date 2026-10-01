@@ -139,22 +139,24 @@ class Approval(ModalScreen[str]):
     BINDINGS: ClassVar = [Binding("y", "answer('yes')", "Yes"), Binding("a", "answer('always')", "Always"),
                 Binding("n", "answer('no')", "No"), Binding("escape", "answer('no')", "No")]
 
-    def __init__(self, call: ToolCall):
+    def __init__(self, call: ToolCall, outside: bool = False):
         super().__init__()
-        self.call = call
+        self.call, self.outside = call, outside
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
-            yield Static(RText.assemble(("Allow ", "bold"), (self.call.name, "bold cyan"), ("?", "bold")))
+            yield Static(RText.assemble(("Allow ", "bold"), (self.call.name, "bold cyan"), ("?", "bold"),
+                                        ("  outside the project" if self.outside else "", "yellow")))
             with VerticalScroll(id="preview"):
                 yield Static(diff_text(self.call))
             with Horizontal(id="buttons"):
                 yield Button("Yes (y)", id="yes", variant="success")
-                yield Button(f"Always {self.call.name} (a)", id="always", variant="primary")
+                if not self.outside:
+                    yield Button(f"Always {self.call.name} (a)", id="always", variant="primary")
                 yield Button("No (n)", id="no", variant="error")
 
     def action_answer(self, answer: str) -> None:
-        self.dismiss(answer)
+        self.dismiss("yes" if answer == "always" and self.outside else answer)
 
     @on(Button.Pressed)
     def pressed(self, event: Button.Pressed) -> None:
@@ -381,23 +383,23 @@ class DiwanApp(App):
 
     # --- approvals --------------------------------------------------------------------------
 
-    def _approve_from_thread(self, call: ToolCall, spec: Spec) -> bool:
+    def _approve_from_thread(self, call: ToolCall, spec: Spec, outside: bool = False) -> bool:
         """Called on the agent thread: show the dialog on the app thread and wait for it."""
-        if call.name in self.always:
+        if call.name in self.always and not outside:   # "always" covers the project only
             return True
         answer: Future[str] = Future()
         self._pending.add(answer)
         try:
-            self.call_from_thread(self._ask, call, answer)
+            self.call_from_thread(self._ask, call, outside, answer)
             result = self._wait(answer)
         finally:
             self._pending.discard(answer)
-        if result == "always":
+        if result == "always" and not outside:
             self.always.add(call.name)
         return result in ("yes", "always")
 
-    def _ask(self, call: ToolCall, answer: Future[str]) -> None:
-        self.push_screen(Approval(call), callback=lambda r: _settle(answer, r or "no"))
+    def _ask(self, call: ToolCall, outside: bool, answer: Future[str]) -> None:
+        self.push_screen(Approval(call, outside), callback=lambda r: _settle(answer, r or "no"))
 
     def _wait(self, answer: Future[str]) -> str:
         """Wait for the dialog, but never past the app's life: if the app closes (however it

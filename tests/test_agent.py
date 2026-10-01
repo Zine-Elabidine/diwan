@@ -10,7 +10,7 @@ from diwan.tools import make_tools
 from helpers import call, say
 
 
-def agent(tmp_path, script, approve=lambda c, s: True, **kw):
+def agent(tmp_path, script, approve=lambda c, s, outside: True, **kw):
     log = Log.new(cwd=str(tmp_path))
     events = []
     a = Agent(Fake(script), "fake-model", log, make_tools(tmp_path), "sys",
@@ -44,7 +44,7 @@ def test_tool_loop_writes_and_reads_a_file(tmp_path):
 
 def test_denied_action_is_reported_to_the_model(tmp_path):
     a, log, _ = agent(tmp_path, [call("bash", command="rm -rf x"), say("ok, asking")],
-                      approve=lambda c, s: False)
+                      approve=lambda c, s, outside: False)
     a.turn("clean up")
     tool_msg = next(m for m in log.messages() if m.role == "tool")
     assert tool_msg.content[0].is_error and "denied" in tool_msg.content[0].text
@@ -55,7 +55,7 @@ def test_read_only_tools_skip_approval(tmp_path):
     (tmp_path / "f.txt").write_text("x")
     asked = []
     a, _, _ = agent(tmp_path, [call("read", path="f.txt"), say("ok")],
-                    approve=lambda c, s: asked.append(c) or True)
+                    approve=lambda c, s, outside: asked.append(c) or True)
     a.turn("read it")
     assert asked == []
 
