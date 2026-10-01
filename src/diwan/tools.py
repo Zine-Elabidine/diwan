@@ -42,7 +42,8 @@ def find_shell() -> tuple[list[str], str]:
     """The command prefix to run a shell command, and the shell's name for the model.
     Windows: Git Bash if installed (never WSL's System32 bash), else PowerShell."""
     if os.name != "nt":
-        return ([shutil.which("bash")], "bash") if shutil.which("bash") else (["/bin/sh"], "sh")
+        bash = shutil.which("bash")
+        return ([bash], "bash") if bash else (["/bin/sh"], "sh")
     candidates = []
     git = shutil.which("git")
     if git:  # ...\Git\cmd\git.exe -> ...\Git\bin\bash.exe
@@ -191,8 +192,8 @@ def make_tools(cwd: Path, policy: PathPolicy | None = None) -> dict[str, Spec]:
         start = time.monotonic()
         # its own process group, so stopping it stops everything it started; no stdin, so a
         # command that waits for input fails instead of hanging (or reading the user's keys)
-        group = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
-                 else {"start_new_session": True})
+        group: dict[str, Any] = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+                                 if os.name == "nt" else {"start_new_session": True})
         p = subprocess.Popen([*shell, flag, command], cwd=cwd, stdin=subprocess.DEVNULL,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                              encoding="utf-8", errors="replace", **group)

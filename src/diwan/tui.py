@@ -510,7 +510,7 @@ class DiwanApp(App):
 
     def action_toggle_think(self) -> None:
         self.show_reasoning = not self.show_reasoning
-        for box in self.query(".reasoning"):
+        for box in self.query(".reasoning").results(Collapsible):
             box.collapsed = not self.show_reasoning
         self.notify(f"reasoning {'shown' if self.show_reasoning else 'hidden'}")
 

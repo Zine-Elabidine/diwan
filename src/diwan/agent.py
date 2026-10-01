@@ -217,7 +217,7 @@ class Agent:
             # results already produced are always saved, even on interrupt;
             # unanswered calls get a synthetic error when the history is sent
             if results:
-                self.log.add_message(Message("tool", results))
+                self.log.add_message(Message("tool", [*results]))
 
     def _run_one(self, call: ToolCall) -> ToolResult:
         spec = self.tools.get(call.name)
@@ -230,7 +230,7 @@ class Agent:
             return ToolResult(call.id, f"Invalid JSON arguments: {e}", True)
         needed = access(spec, args, self.paths)
         if needed is Access.DENIED:
-            result = ToolResult(call.id, self.paths.why(str(args.get(spec.path_arg))), True)
+            result = ToolResult(call.id, self.paths.why(str(args.get(spec.path_arg or ""))), True)
             self.on(ToolFinished(call, result))
             return result
         if not spec.readonly or needed is Access.ASK:

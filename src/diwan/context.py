@@ -59,8 +59,11 @@ class ContextManager:
         used, exact, ratio, borrowed = None, False, tokens.CHARS_PER_TOKEN, None
         for i in range(len(request) - 1, 0, -1):
             m = request[i]
-            prompt = (m.usage.input + m.usage.cache_read + m.usage.cache_write) if m.usage else 0
-            if m.role != "assistant" or not prompt:
+            u = m.usage
+            if m.role != "assistant" or u is None:
+                continue
+            prompt = u.input + u.cache_read + u.cache_write
+            if not prompt:
                 continue
             if m.model != model or m.provider != provider.provider:
                 if borrowed is None:   # the most recent other model's ratio, as a fallback
@@ -72,7 +75,7 @@ class ContextManager:
                 used = tokens.estimate(request, tools, ratio)
                 break
             after = request[i + 1:]
-            used = prompt + m.usage.output + (tokens.estimate(after, None, ratio) if after else 0)
+            used = prompt + u.output + (tokens.estimate(after, None, ratio) if after else 0)
             exact = not after
             break
         if used is None:

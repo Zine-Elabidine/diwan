@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from tarjuman import Message, ToolCall, ToolResult
+from tarjuman import Block, Message, ToolCall, ToolResult
 
 MASK_AT = 0.5             # start clearing when the context is half full
 KEEP_RECENT = 0.25        # newest tool outputs kept verbatim: this share of the usable window...
@@ -37,9 +37,10 @@ def apply(messages: list[Message], masked: dict[str, str]) -> list[Message]:
 
 
 def _masked(m: Message, masked: dict[str, str]) -> Message:
-    if m.role == "tool" and any(f"out:{b.call_id}" in masked for b in m.content):
+    if m.role == "tool" and any(f"out:{r.call_id}" in masked for r in m.tool_results):
         return _copy(m, [ToolResult(b.call_id, masked[f"out:{b.call_id}"], b.is_error, b.name)
-                         if f"out:{b.call_id}" in masked else b for b in m.content])
+                         if isinstance(b, ToolResult) and f"out:{b.call_id}" in masked else b
+                         for b in m.content])
     if m.role == "assistant" and any(f"args:{c.id}" in masked for c in m.tool_calls):
         return _copy(m, [ToolCall(b.id, b.name, masked[f"args:{b.id}"])
                          if isinstance(b, ToolCall) and f"args:{b.id}" in masked else b
@@ -64,7 +65,7 @@ def plan(messages: list[Message], masked: dict[str, str], usable: int,
     for m in reversed(messages):
         if m.role != "tool":
             continue
-        for r in reversed(m.content):
+        for r in reversed(m.tool_results):
             size = tok(r.text)
             if recent and (r.call_id in last_step or kept + size <= keep):
                 kept += size
@@ -76,7 +77,9 @@ def plan(messages: list[Message], masked: dict[str, str], usable: int,
                 entries[f"out:{r.call_id}"] = text
                 saved += size - tok(text)
                 cleared += 1
-            slim = _slim_args(call) if call and f"args:{call.id}" not in masked else None
+            if call is None or f"args:{call.id}" in masked:
+                continue
+            slim = _slim_args(call)
             if slim is not None:
                 entries[f"args:{call.id}"] = slim
                 saved += tok(call.arguments) - tok(slim)
@@ -124,7 +127,7 @@ def _last_step_ids(messages: list[Message]) -> set[str]:
     return set()
 
 
-def _copy(m: Message, content: list[Any]) -> Message:
+def _copy(m: Message, content: list[Block]) -> Message:
     return Message(m.role, content, m.provider, m.model, m.usage, m.stop, m.protocol,
                    m.response_model, m.replay, m.error, m.partial)
 

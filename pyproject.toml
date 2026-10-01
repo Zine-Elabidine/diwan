@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Zine-Elabidine LAABOUDI", email = "zine.elabidine251@gmail.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.13"   # Path.full_match (glob)
 dependencies = [
     "rich>=15.0.0",
     "tarjuman",
@@ -51,5 +51,5 @@ ignore = [
 
 [tool.pyright]
 include = ["src"]
-pythonVersion = "3.12"
+pythonVersion = "3.13"
 typeCheckingMode = "standard"

@@ -53,7 +53,7 @@ class Router:
 
 def describe(ref: Ref) -> str:
     """One line about a model from the catalog: context, output limit, price."""
-    client_catalog = (providers.providers_table().get(ref.provider) or {}).get("catalog")
+    client_catalog = (catalog.providers_table().get(ref.provider) or {}).get("catalog")
     info = catalog.lookup(client_catalog, ref.model) if client_catalog else None
     if info is None:
         return f"{ref}  (not in the catalog)"
@@ -83,7 +83,7 @@ def listing(query: str, default_provider: str, limit: int = 20) -> list[str]:
     words = query.split()
     provider = words.pop(0) if words and words[0] in providers.names() else default_provider
     needle = " ".join(words).lower()
-    cat = (providers.providers_table().get(provider) or {}).get("catalog")
+    cat = (catalog.providers_table().get(provider) or {}).get("catalog")
     if not cat:
         return [f"{provider} has no catalog: any model id its server accepts will work"]
     found = []
