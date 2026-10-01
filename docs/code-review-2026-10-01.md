@@ -231,3 +231,29 @@ manager instead of `agent.py`.
 
 Each step is its own commit with all tests green, and behaviour is unchanged unless the
 finding says otherwise.
+
+---
+
+## Target layout (decided before phase 2, so nothing is renamed twice)
+
+**Tarjuman**
+
+| Module | Holds |
+|---|---|
+| `provider.py` (new) | `Provider` protocol: `provider`, `protocol`, `stream()`, `complete()`, `info()`, `context_window()`, `target()`. `HTTPProvider` base: client setup, `info`, `context_window`, `stream` / `_events` with Cancel, `complete`. A protocol supplies `body()`, its request path, its `_Parser`, its auth headers and its error mapping. |
+| `openai_chat.py`, `anthropic.py` | Subclasses of `HTTPProvider`: wire format only |
+| `tokens.py` (was `limits.py`) | windows from `/models`, `chars`, `estimate`, `ratio` |
+| `providers.py` | `connect(name, ..., app=App(name, url))`. The app identity headers come from the caller; `providers.json` only says which header carries what. |
+| `fake.py` | implements the full `Provider` protocol |
+
+**Diwan**
+
+| Module | Holds |
+|---|---|
+| `agent.py` | `Agent`: the loop, steps, tools, retries, `Interrupted`. Public surface unchanged: `turn`, `interrupt`, `use`, `context_use`, `total`. Takes a prompt builder `(provider name, model) -> str`, called at construction and on `use()`. |
+| `events.py` (new) | what the agent tells the UI: `StateChanged`, `ToolStarted`, `ToolFinished`, `Retrying`, `ContextChanged`, `ContextCleared`, `TurnEnded`, `UIEvent` |
+| `context.py` | `ContextManager`: the view sent to the model, `measure()` (returns `ContextUse`, including its chars-per-token), the fit check for `/model`, when to clear. Later: the summary tier and `recall`. |
+| `clearing.py` (was the body of `context.py`) | pure functions: `plan`, `apply`, placeholders |
+| `log.py` | event kinds as constants, branch state cached by head id |
+| `paths.py` | the path policy (phase 1) |
+| phase 3: `session.py`, `commands.py`, `present.py`, `tools/` | Session shared by both front-ends, command registry, shared presentation, one module per tool + `ToolContext` |
