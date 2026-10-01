@@ -11,20 +11,15 @@ from typing import Any
 
 from tarjuman import (BlockEnd, BlockStart, Cancel, Event, Finish, Message, Provider, Reasoning,
                       ReasoningDelta, Replay, TarjumanError, Text, TextDelta, ToolCall,
-                      ToolCallDelta, ToolResult, Unknown, Usage, errors, tokens)
+                      ToolCallDelta, ToolResult, Unknown, Usage, errors)
 
 from . import clearing
-from .context import ContextUse
+from .context import ContextManager, ContextUse
 from .events import (ContextChanged, ContextCleared, Reason, Retrying, StateChanged, ToolFinished,
                      ToolStarted, TurnEnded, UIEvent)
 from .log import Log
 from .paths import Access, PathPolicy
 from .tools import Spec, ToolError, access
-
-# another model's chars-per-token, reused for this one, assumes 15% more tokens (tokenizers differ;
-# measured: DeepSeek 3.08, Claude 2.68 on the same session)
-OTHER_TOKENIZER = 0.85
-
 
 class Interrupted(BaseException):
     """The user stopped the turn (Agent.interrupt). A BaseException, like KeyboardInterrupt, so
@@ -63,7 +58,7 @@ class Agent:
         self.paths = paths or PathPolicy(Path(log.events[0].data.get("cwd") or "."))
         self.total = Usage()
         self._cancel = Cancel()
-        self._ratio = tokens.CHARS_PER_TOKEN   # the current model's chars per token, from context()
+        self.context_manager = ContextManager(log, self.limits.max_tokens, self.limits.context)
         self.context_use = self.context()
 
     def use(self, provider: Provider, model: str) -> None:
@@ -73,7 +68,7 @@ class Agent:
         if (provider.provider, model) == (self.provider.provider, self.model):
             return
         fit = self.context(provider, model)
-        if fit.usable and fit.used > fit.usable:
+        if fit.overflows:
             raise TarjumanError(
                 errors.CONTEXT_WINDOW_EXCEEDED,
                 f"this conversation is about {fit.used:,} tokens for {model}, more than the "
@@ -88,49 +83,12 @@ class Agent:
         self._context_changed()
 
     def context(self, provider: Provider | None = None, model: str | None = None) -> ContextUse:
-        """How many tokens the next request holds, counted for `model` (default: the current
-        one). Exact from this model's last usage report, plus an estimate for what came after it,
-        at a chars-per-token ratio calibrated on that report. With no report from this model
-        (a new session, or right after /model) the whole history is estimated."""
+        """How full the next request is, counted for `model` (default: the current one) with
+        that model's own system prompt. See ContextManager.measure."""
         provider, model = provider or self.provider, model or self.model
         current = (provider.provider, model) == (self.provider.provider, self.model)
         system = self.system if current else self._prompt(provider.provider, model)
-        request = [Message.system(system), *self._view()]
-        tools = [s.tool for s in self.tools.values()]
-        used, exact, borrowed = None, False, None
-        for i in range(len(request) - 1, 0, -1):
-            m = request[i]
-            prompt = (m.usage.input + m.usage.cache_read + m.usage.cache_write) if m.usage else 0
-            if m.role != "assistant" or not prompt:
-                continue
-            if m.model != model or m.provider != provider.provider:
-                if borrowed is None:   # the most recent other model's ratio, as a fallback
-                    borrowed = tokens.ratio(request[:i], tools, prompt) or 0.0
-                continue
-            ratio = tokens.ratio(request[:i], tools, prompt) or tokens.CHARS_PER_TOKEN
-            if any(point >= i for point in self.log.mask_points()):
-                # outputs were cleared after this report: the reported count is too high now
-                used = tokens.estimate(request, tools, ratio)
-                break
-            after = request[i + 1:]
-            used = prompt + m.usage.output + (tokens.estimate(after, None, ratio) if after else 0)
-            exact = not after
-            break
-        if used is None:
-            # no report from this model: the same text measured on another model, plus a margin
-            # for a different tokenizer; else the default
-            ratio = min(borrowed * OTHER_TOKENIZER, tokens.CHARS_PER_TOKEN) if borrowed \
-                else tokens.CHARS_PER_TOKEN
-            used = tokens.estimate(request, tools, ratio)
-        window = _ask(provider.context_window, model)
-        if self.limits.context:
-            window = min(window, self.limits.context) if window else self.limits.context
-        info = _ask(provider.info, model)
-        reserve = min(self.limits.max_tokens, info.max_output) if info and info.max_output \
-            else self.limits.max_tokens
-        if current:
-            self._ratio = ratio
-        return ContextUse(used, window, max(window - reserve, 0) if window else None, exact)
+        return self.context_manager.measure(system, [s.tool for s in self.tools.values()], provider, model)
 
     def _context_changed(self) -> None:
         try:
@@ -185,25 +143,15 @@ class Agent:
 
     # --- steps ---------------------------------------------------------------------------------
 
-    def _view(self) -> list[Message]:
-        """The conversation as the model sees it: the log's messages, with cleared outputs."""
-        return clearing.apply(self.log.messages(), self.log.masked())
-
     def _maybe_clear(self) -> None:
-        """Clear old tool outputs once the context is half full (clearing.py)."""
-        use = self.context_use
-        if not use.usable or (use.fraction or 0) < clearing.MASK_AT:
-            return
-        p = clearing.plan(self.log.messages(), self.log.masked(), use.usable, self._ratio)
-        if p is None:
-            return
-        self.log.append("mask", {"entries": p.entries, "saved": p.saved})
-        self.on(ContextCleared(clearing.saved_text(p)))
-        self._context_changed()
+        p = self.context_manager.clear(self.context_use)
+        if p is not None:
+            self.on(ContextCleared(clearing.saved_text(p)))
+            self._context_changed()
 
     def _sample(self) -> Message:
         self._maybe_clear()
-        messages = [Message.system(self.system), *self._view()]
+        messages = [Message.system(self.system), *self.context_manager.view()]
         tools = [s.tool for s in self.tools.values()]
         attempt = 0
         while True:
@@ -322,14 +270,6 @@ class Agent:
 
 def _fixed(system: str) -> Callable[[str, str], str]:
     return lambda provider, model: system
-
-
-def _ask[T](lookup: Callable[[str], T | None], model: str) -> T | None:
-    """Optional knowledge from the provider (window, catalog info); None if it has none."""
-    try:
-        return lookup(model)
-    except Exception:  # a lookup must never break the session
-        return None
 
 
 def _collect(blocks: list[Any], ev: Event) -> None:

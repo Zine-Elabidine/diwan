@@ -75,3 +75,19 @@ def test_the_agent_clears_at_half_full_records_it_and_the_gauge_drops(tmp_path):
     assert log.masked()                                         # later requests rebuild the same view
     sent = a.provider.requests[-1]
     assert any("[Output cleared" in m.content[0].text for m in sent if m.role == "tool")
+
+
+def test_the_context_manager_works_without_an_agent(tmp_path):
+    from diwan.context import ContextManager
+
+    log = Log.new(cwd=str(tmp_path))
+    for m in history(16):   # ~21k tokens of a 36k usable window
+        log.add_message(m)
+    cm = ContextManager(log, answer_room=4_000)
+    use = cm.measure("sys", [], Fake([], window=40_000), "fake-model")
+    assert use.usable == 36_000 and not use.exact and use.fraction > clearing.MASK_AT
+    assert use.chars_per_token == 3.0                # no report yet: the default ratio
+    p = cm.clear(use)
+    assert p is not None and log.events[-1].type == "mask"
+    assert cm.measure("sys", [], Fake([], window=40_000), "fake-model").used < use.used
+    assert cm.clear(use) is None                     # nothing left worth clearing
