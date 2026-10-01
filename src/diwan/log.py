@@ -30,12 +30,30 @@ class Event:
     ts: float = field(default_factory=time.time)
 
 
+@dataclass
+class _Branch:
+    """What the path to `head` adds up to, kept so each request doesn't re-walk the log."""
+    head: str | None = None
+    messages: list[Message] = field(default_factory=list)
+    masked: dict[str, str] = field(default_factory=dict)
+    mask_points: list[int] = field(default_factory=list)
+
+    def add(self, e: Event) -> None:
+        if e.type == "message":
+            self.messages.append(Message.from_dict(e.data))
+        elif e.type == "mask":
+            self.masked.update(e.data["entries"])
+            self.mask_points.append(len(self.messages))
+        self.head = e.id
+
+
 class Log:
     def __init__(self, path: Path, events: list[Event]):
         self.path = path
         self.events = events
         self.by_id = {e.id: e for e in events}
         self.head: str | None = events[-1].id if events else None
+        self._branch_cache: _Branch | None = None
 
     @classmethod
     def new(cls, **meta: Any) -> Log:
@@ -75,6 +93,8 @@ class Log:
             f.write(json.dumps(e.__dict__, ensure_ascii=False) + "\n")
         self.events.append(e)
         self.by_id[e.id] = e
+        if self._branch_cache and self._branch_cache.head == self.head:
+            self._branch_cache.add(e)   # the branch grew by one event: no re-walk
         self.head = e.id
         return e.id
 
@@ -89,27 +109,29 @@ class Log:
             cur = e.parent
         return out[::-1]
 
+    def _branch(self) -> _Branch:
+        b = self._branch_cache
+        if b is None or b.head != self.head:   # first use, or the head moved to another branch
+            b = _Branch()
+            for e in self.path_to_head():
+                b.add(e)
+            self._branch_cache = b
+        return b
+
+    # Callers get their own lists, never the cache's. The Message objects are shared: treat
+    # them as read-only (copy one to change it, as context.apply does).
+
     def messages(self) -> list[Message]:
         """The conversation along the current branch."""
-        return [Message.from_dict(e.data) for e in self.path_to_head() if e.type == "message"]
+        return list(self._branch().messages)
 
     def masked(self) -> dict[str, str]:
         """What earlier "mask" events on this branch cleared (see context.py)."""
-        out: dict[str, str] = {}
-        for e in self.path_to_head():
-            if e.type == "mask":
-                out.update(e.data["entries"])
-        return out
+        return dict(self._branch().masked)
 
     def mask_points(self) -> list[int]:
         """For each "mask" event on this branch, how many messages came before it."""
-        points, n = [], 0
-        for e in self.path_to_head():
-            if e.type == "message":
-                n += 1
-            elif e.type == "mask":
-                points.append(n)
-        return points
+        return list(self._branch().mask_points)
 
     def current_model(self) -> tuple[str | None, str | None]:
         """(provider, model) in use at the head: the last switch on this branch, else the
