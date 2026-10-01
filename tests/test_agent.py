@@ -204,3 +204,18 @@ def test_interrupt_mid_stream_keeps_finished_blocks_signed_and_the_cut_one_apart
     assert sent[2].content == [Reasoning("plan")] and sent[2].replay.blocks == ["sig-1"]
     assert INTERRUPTED in sent[3].text and "<system-reminder>" in sent[3].text
     assert sent[4].text == "no, check the README"
+
+
+def test_an_unexpected_error_ends_the_turn_not_the_session(tmp_path):
+    class Broken(Fake):
+        def stream(self, *a, **kw):
+            raise RuntimeError("provider bug")
+
+    log = Log.new(cwd=str(tmp_path))
+    a = Agent(Broken([]), "fake-model", log, make_tools(tmp_path), "sys")
+    ended = a.turn("hi")
+    assert ended.reason == "error" and "RuntimeError: provider bug" in ended.error
+    err = next(e for e in log.events if e.type == "error")
+    assert err.data["code"] == "INTERNAL" and "Traceback" in err.data["traceback"]
+    a.provider = Fake([say("still here")])
+    assert a.turn("again").reason == "done"

@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from rich.text import Text
-from tarjuman import TarjumanError, providers
+from tarjuman import TarjumanError, errors, providers
 
 from . import __version__
 from .agent import Agent, Limits
@@ -66,7 +66,8 @@ def start_ref(args: argparse.Namespace, log: Log | None, router: Router) -> Ref:
             return Ref(provider or router.default, model)
     model = DEFAULT_MODELS.get(router.default)
     if model is None:
-        raise TarjumanError("INVALID_REQUEST", f"say which model {router.default} should run: -m <id>")
+        raise TarjumanError(errors.INVALID_REQUEST,
+                            f"say which model {router.default} should run: -m <id>")
     return Ref(router.default, model)
 
 

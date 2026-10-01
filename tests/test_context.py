@@ -80,3 +80,14 @@ def test_a_switch_that_doesnt_fit_is_refused_and_changes_nothing(tmp_path):
 def test_unknown_window_means_no_percentage(tmp_path):
     a = make(tmp_path, [], window=None)
     assert a.context_use.usable is None and a.context_use.fraction is None
+
+
+def test_measuring_after_a_switch_stays_fast_on_a_long_session(tmp_path):
+    import time
+    a = make(tmp_path, [], window=10_000_000)
+    for i in range(800):     # 800 replies from another model: used to be quadratic (~200 ms)
+        a.log.add_message(Message("assistant", [Text("x" * 500)], "fake", "old-model",
+                                  Usage(input=1_000 + i, output=10), "end"))
+    start = time.perf_counter()
+    a.context()
+    assert time.perf_counter() - start < 0.1

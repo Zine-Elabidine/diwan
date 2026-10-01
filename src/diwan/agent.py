@@ -3,6 +3,7 @@ plus the tools it asked for. Every step, tool result, retry and ending is logged
 
 from __future__ import annotations
 
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
@@ -10,6 +11,7 @@ from typing import Any, Literal, Protocol
 from tarjuman import (BlockEnd, BlockStart, Cancel, Event, Finish, Message, Reasoning,
                       ReasoningDelta, Replay, TarjumanError, Text, TextDelta, Tool, ToolCall,
                       ToolCallDelta, ToolResult, Unknown, Usage)
+from tarjuman import errors
 from tarjuman import limits as tokens
 
 from . import context as ctx
@@ -126,7 +128,7 @@ class Agent:
         fit = self.context(provider, model)
         if fit.usable and fit.used > fit.usable:
             raise TarjumanError(
-                "CONTEXT_WINDOW_EXCEEDED",
+                errors.CONTEXT_WINDOW_EXCEEDED,
                 f"this conversation is about {fit.used:,} tokens for {model}, more than the "
                 f"{fit.usable:,} it can take ({fit.window:,} minus room for the answer). Pick a "
                 "model with a bigger window, or start a new session with /new.")
@@ -151,11 +153,11 @@ class Agent:
             prompt = (m.usage.input + m.usage.cache_read + m.usage.cache_write) if m.usage else 0
             if m.role != "assistant" or not prompt:
                 continue
-            ratio = tokens.ratio(request[:i], tools, prompt)
             if m.model != model or m.provider != provider.provider:
-                borrowed = borrowed or ratio   # the most recent other model's, as a fallback
+                if borrowed is None:   # the most recent other model's ratio, as a fallback
+                    borrowed = tokens.ratio(request[:i], tools, prompt) or 0.0
                 continue
-            ratio = ratio or tokens.CHARS_PER_TOKEN
+            ratio = tokens.ratio(request[:i], tools, prompt) or tokens.CHARS_PER_TOKEN
             if any(point >= i for point in self.log.mask_points()):
                 # outputs were cleared after this report: the reported count is too high now
                 used = tokens.estimate(request, tools, ratio)
@@ -181,7 +183,12 @@ class Agent:
         return ContextUse(used, window, max(window - reserve, 0) if window else None, exact)
 
     def _context_changed(self) -> None:
-        self.context_use = self.context()
+        try:
+            self.context_use = self.context()
+        except Exception as e:  # the gauge is informative: a bug in it must not stop the turn
+            self.log.append("error", {"code": "INTERNAL", "message": f"context: {e!r}",
+                                      "traceback": traceback.format_exc()})
+            return
         self.on(ContextChanged(self.context_use))
 
     def interrupt(self) -> None:
@@ -220,6 +227,11 @@ class Agent:
             return self._end("interrupted", steps, usage)
         except TarjumanError as e:
             return self._end("error", steps, usage, str(e))
+        except Exception as e:  # a bug must end the turn, never the session
+            self.log.append("error", {"code": "INTERNAL", "message": repr(e),
+                                      "traceback": traceback.format_exc()})
+            return self._end("error", steps, usage,
+                             f"{type(e).__name__}: {e} (an error in Diwan; the session log has details)")
 
     # --- steps ---------------------------------------------------------------------------------
 
@@ -259,12 +271,12 @@ class Agent:
                     self._check_stop()
                     if isinstance(ev, Finish):
                         return ev.message
-                raise TarjumanError("SERVER_ERROR", "stream ended without a finish")
+                raise TarjumanError(errors.SERVER_ERROR, "stream ended without a finish")
             except KeyboardInterrupt:
                 self._keep_interrupted(partial, done)
                 raise
             except TarjumanError as e:
-                if e.code == "CANCELLED":
+                if e.code == errors.CANCELLED:
                     self._keep_interrupted(partial, done)
                     raise KeyboardInterrupt from None
                 attempt += 1
