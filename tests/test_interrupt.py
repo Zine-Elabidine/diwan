@@ -79,3 +79,18 @@ def test_the_next_turn_starts_with_a_fresh_signal(tmp_path):
     a = Agent(Fake([say("one"), say("two")]), "fake-model", log, make_tools(tmp_path), "sys")
     a.interrupt()                       # a stale Esc between turns
     assert a.turn("hi").reason == "done"
+
+
+def test_a_real_ctrl_c_in_a_tool_ends_the_turn_as_interrupted(tmp_path):
+    from diwan.tools import Spec
+
+    def stubborn(**_):
+        raise KeyboardInterrupt          # plain mode: SIGINT lands in whatever is running
+
+    tools = make_tools(tmp_path)
+    tools["read"] = Spec(tools["read"].tool, stubborn, readonly=True)
+    log = Log.new(cwd=str(tmp_path))
+    a = Agent(Fake([call("read", path="x")]), "fake-model", log, tools, "sys")
+    assert a.turn("go").reason == "interrupted"
+    assert log.messages()[-1] == Message.system(INTERRUPTED)
+

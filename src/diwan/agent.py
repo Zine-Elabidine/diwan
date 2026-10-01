@@ -25,6 +25,14 @@ Reason = Literal["done", "max_tokens", "max_steps", "interrupted", "error"]
 # measured: DeepSeek 3.08, Claude 2.68 on the same session)
 OTHER_TOKENIZER = 0.85
 
+class Interrupted(BaseException):
+    """The user stopped the turn (Agent.interrupt). A BaseException, like KeyboardInterrupt, so
+    no `except Exception` on the way (a tool, a provider, a UI callback) can swallow it."""
+
+
+# what stops a turn: our own signal, or a real Ctrl+C in plain mode
+STOPS = (Interrupted, KeyboardInterrupt)
+
 INTERRUPTED = ("The user interrupted the previous turn on purpose. If a tool call was cut off, "
                "it may have partly run: check before repeating it.")
 
@@ -195,7 +203,7 @@ class Agent:
 
     def _check_stop(self) -> None:
         if self._cancel.cancelled:
-            raise KeyboardInterrupt
+            raise Interrupted
 
     def turn(self, text: str) -> TurnEnded:
         self._cancel = Cancel()
@@ -216,7 +224,7 @@ class Agent:
                 if not msg.tool_calls:
                     return self._end("done", steps, usage)
                 self._run_tools(msg.tool_calls)
-        except KeyboardInterrupt:
+        except STOPS:
             # its own event, rendered as a reminder when the history is sent (never an edit)
             self.log.add_message(Message.system(INTERRUPTED))
             return self._end("interrupted", steps, usage)
@@ -267,13 +275,13 @@ class Agent:
                     if isinstance(ev, Finish):
                         return ev.message
                 raise TarjumanError(errors.SERVER_ERROR, "stream ended without a finish")
-            except KeyboardInterrupt:
+            except STOPS:
                 self._keep_interrupted(partial, done)
                 raise
             except TarjumanError as e:
                 if e.code == errors.CANCELLED:
                     self._keep_interrupted(partial, done)
-                    raise KeyboardInterrupt from None
+                    raise Interrupted from None
                 attempt += 1
                 # failed attempts are logged but never become part of the conversation
                 self.log.append("error", {"code": e.code, "message": e.message, "attempt": attempt})
