@@ -79,3 +79,20 @@ The problem Zine names: compaction without memory is like starting a new session
 8. **Later (self-improvement): ACON-style guideline learning.** When a task fails after a
    compaction but would have succeeded without it, find what the summary dropped and update the
    guideline. It is measurable, local to the harness, and it improves without us editing it.
+
+## 5. Decision (2026-09-30): age tiers
+
+Measured on 6 real sessions (~15M tokens): tool outputs 61%, tool-call arguments 17%, agent
+text 13%, file contents in write/edit 6%, user text 2%. Masking outputs alone shrinks a session
+only about 2.5x, and the history keeps growing. Codex's "user messages + summary" loses what
+the agent learned and makes it redo finished work. So the treatment depends on age:
+
+| Tier | What is sent | Size |
+|---|---|---|
+| Recent (~30k tokens) | everything, verbatim | 1x |
+| Middle | user and agent messages, short call stubs (`edit auth.py`, `bash: pytest -q`); outputs and large arguments cleared | ~5-6x smaller |
+| Old | one structured summary, updated rather than rewritten: goal, steps done, decisions and rejected options, files touched | ~50-100x smaller |
+
+The full log stays on disk; `recall` searches it. Content moves from recent to old as the
+session grows. Build order: search tools + context gauge → masking tiers → progress/decisions
+file → summary + recall.
