@@ -28,7 +28,7 @@ from .events import (ContextCleared, Retrying, StateChanged, ToolFinished, ToolS
 from .log import Log
 from .models import Ref, Router, describe, listing, switch
 from .tools import Spec
-from .ui import fmt_context, fmt_cost, fmt_tokens, fmt_usage, short, summarize_call
+from .present import fmt_context, fmt_cost, fmt_tokens, fmt_usage, short, summarize_call
 
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 PREVIEW_LINES = 8

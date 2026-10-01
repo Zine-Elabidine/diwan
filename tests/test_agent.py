@@ -151,7 +151,8 @@ def test_bash_reports_exit_code_and_stderr(tmp_path):
 def test_ui_renders_markdown_tools_and_small_costs(tmp_path):
     from rich.console import Console
 
-    from diwan.ui import Terminal, fmt_cost
+    from diwan.present import fmt_cost
+    from diwan.ui import Terminal
 
     assert fmt_cost(0.0000694) == "$0.000069" and fmt_cost(0) == "$0" and fmt_cost(0.25) == "$0.2500"
     console = Console(record=True, width=80, force_terminal=False)

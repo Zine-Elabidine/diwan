@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from tarjuman import App, Provider, catalog, providers
 
 from .agent import Agent
+from .present import fmt_window
 
 # how providers that show the calling app (OpenRouter) name Diwan
 APP = App("Diwan", "https://github.com/Zine-Elabidine/diwan")
@@ -59,7 +60,7 @@ def describe(ref: Ref) -> str:
         return f"{ref}  (not in the catalog)"
     parts = [str(ref)]
     if info.context:
-        parts.append(f"{_tokens(info.context)} context")
+        parts.append(f"{fmt_window(info.context)} context")
     if info.reasoning:
         parts.append(f"reasoning: {', '.join(info.levels)}" if info.levels else "reasoning")
     if info.price:
@@ -96,9 +97,3 @@ def listing(query: str, default_provider: str, limit: int = 20) -> list[str]:
     if len(found) > limit:
         lines.append(f"... {len(found) - limit} more; add words to narrow it")
     return lines or [f"no {provider} model matches {needle!r}"]
-
-
-def _tokens(n: int) -> str:
-    if n >= 1_000_000:
-        return f"{n / 1_000_000:.1f}".rstrip("0").rstrip(".") + "M"
-    return f"{n // 1000}k"

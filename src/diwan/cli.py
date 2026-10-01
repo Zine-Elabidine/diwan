@@ -17,7 +17,8 @@ from .models import Ref, Router, describe, listing, switch
 from .paths import PathPolicy
 from .prompt import system_prompt
 from .tools import make_tools
-from .ui import Terminal, fmt_usage
+from .present import fmt_usage
+from .ui import Terminal
 
 # the model used when none is given, per provider ("local" has none: say which with -m)
 DEFAULT_MODELS = {"openrouter": "deepseek/deepseek-v4-flash", "anthropic": "claude-sonnet-5-5",
