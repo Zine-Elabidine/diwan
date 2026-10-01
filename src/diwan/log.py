@@ -126,7 +126,7 @@ class Log:
         return list(self._branch().messages)
 
     def masked(self) -> dict[str, str]:
-        """What earlier "mask" events on this branch cleared (see context.py)."""
+        """What earlier "mask" events on this branch cleared (see clearing.py)."""
         return dict(self._branch().masked)
 
     def mask_points(self) -> list[int]:

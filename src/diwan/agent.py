@@ -13,7 +13,7 @@ from tarjuman import (BlockEnd, BlockStart, Cancel, Event, Finish, Message, Prov
                       ReasoningDelta, Replay, TarjumanError, Text, TextDelta, ToolCall,
                       ToolCallDelta, ToolResult, Unknown, Usage, errors, tokens)
 
-from . import context as ctx
+from . import clearing
 from .log import Log
 from .paths import Access, PathPolicy
 from .tools import Spec, ToolError, access
@@ -247,18 +247,18 @@ class Agent:
 
     def _view(self) -> list[Message]:
         """The conversation as the model sees it: the log's messages, with cleared outputs."""
-        return ctx.apply(self.log.messages(), self.log.masked())
+        return clearing.apply(self.log.messages(), self.log.masked())
 
     def _maybe_clear(self) -> None:
-        """Clear old tool outputs once the context is half full (context.py)."""
+        """Clear old tool outputs once the context is half full (clearing.py)."""
         use = self.context_use
-        if not use.usable or (use.fraction or 0) < ctx.MASK_AT:
+        if not use.usable or (use.fraction or 0) < clearing.MASK_AT:
             return
-        p = ctx.plan(self.log.messages(), self.log.masked(), use.usable, self._ratio)
+        p = clearing.plan(self.log.messages(), self.log.masked(), use.usable, self._ratio)
         if p is None:
             return
         self.log.append("mask", {"entries": p.entries, "saved": p.saved})
-        self.on(ContextCleared(ctx.saved_text(p)))
+        self.on(ContextCleared(clearing.saved_text(p)))
         self._context_changed()
 
     def _sample(self) -> Message:
