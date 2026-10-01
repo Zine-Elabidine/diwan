@@ -17,7 +17,7 @@ from .models import Ref, Router
 from .paths import PathPolicy
 from .prompt import system_prompt
 from .session import Approvals, Session
-from .tools import make_tools
+from .tools import default_tools
 from .ui import Terminal
 
 # the model used when none is given, per provider ("local" has none: say which with -m)
@@ -47,7 +47,7 @@ def build_agent(ref: Ref, log: Log, term: Terminal, cwd: Path, router: Router,
                 limits: Limits | None = None) -> Agent:
     client = router.client(ref.provider)
     paths = PathPolicy(cwd)
-    return Agent(client, ref.model, log, make_tools(cwd, paths),
+    return Agent(client, ref.model, log, default_tools(),
                  lambda provider, model: system_prompt(cwd, model, provider),
                  approve=term.approve, on=term.on, limits=limits, paths=paths)
 

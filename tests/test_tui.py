@@ -7,13 +7,13 @@ from tarjuman.fake import Fake
 from diwan.agent import Agent
 from diwan.log import Log
 from diwan.models import Ref, Router
-from diwan.tools import make_tools
+from diwan.tools import default_tools
 from diwan.tui import Approval, DiwanApp, ToolView, UserMsg
 
 
 def make_app(tmp_path, script):
     def make_agent(log, ref):
-        return Agent(Fake(script), ref.model, log, make_tools(tmp_path), "sys")
+        return Agent(Fake(script), ref.model, log, default_tools(), "sys")
     return DiwanApp(make_agent, Log.new(cwd=str(tmp_path)), tmp_path, Router("openrouter"),
                     Ref("openrouter", "deepseek/deepseek-v4-flash"))
 
@@ -69,7 +69,7 @@ async def test_denied_and_history_replay(tmp_path):
 
     # reopening the same session shows the earlier conversation
     log = Log.load(app.session_log.path)
-    again = DiwanApp(lambda lg, r: Agent(Fake([]), "m", lg, make_tools(tmp_path), "sys"), log, tmp_path,
+    again = DiwanApp(lambda lg, r: Agent(Fake([]), "m", lg, default_tools(), "sys"), log, tmp_path,
                      Router("openrouter"), Ref("openrouter", "m"))
     async with again.run_test(size=(100, 30)) as pilot:
         await pilot.pause(0.2)

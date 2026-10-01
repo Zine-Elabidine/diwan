@@ -18,7 +18,7 @@ from .events import (ContextChanged, ContextCleared, Retrying, StateChanged, Too
 from .present import (fmt_context, fmt_cost, fmt_usage, preview, short, summarize_call,
                       turn_mark)
 from .session import Approvals
-from .tools import Spec
+from .tools import Tool
 
 TOOL_LINES = 4
 PREVIEW_LINES = 8   # of a write or edit, before approving
@@ -138,7 +138,7 @@ class Terminal:
 
     # --- approvals --------------------------------------------------------------------------
 
-    def approve(self, call: ToolCall, spec: Spec, outside: bool = False) -> bool:
+    def approve(self, call: ToolCall, tool: Tool, outside: bool = False) -> bool:
         """`outside`: the call reaches beyond the project. "Always" never covers that: it asks
         every time (unless -y)."""
         self._flush()

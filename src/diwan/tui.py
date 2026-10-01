@@ -30,7 +30,7 @@ from .models import Ref, Router
 from .present import (fmt_context, fmt_cost, fmt_tokens, fmt_usage, preview, short,
                       summarize_call, turn_mark)
 from .session import Approvals, Session
-from .tools import Spec
+from .tools import Tool
 
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 PREVIEW_LINES = 8
@@ -358,7 +358,7 @@ class DiwanApp(App):
 
     # --- approvals --------------------------------------------------------------------------
 
-    def _approve_from_thread(self, call: ToolCall, spec: Spec, outside: bool = False) -> bool:
+    def _approve_from_thread(self, call: ToolCall, tool: Tool, outside: bool = False) -> bool:
         """Called on the agent thread: show the dialog on the app thread and wait for it."""
         if self.session.approvals.covers(call, outside):
             return True

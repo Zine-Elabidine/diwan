@@ -7,14 +7,14 @@ from tarjuman.fake import Fake
 from diwan.agent import INTERRUPTED, Agent, Limits
 from diwan.events import ToolFinished
 from diwan.log import Log
-from diwan.tools import make_tools
-from helpers import call, say
+from diwan.tools import ToolError, default_tools
+from helpers import call, say, tool
 
 
 def agent(tmp_path, script, approve=lambda c, s, outside: True, **kw):
     log = Log.new(cwd=str(tmp_path))
     events = []
-    a = Agent(Fake(script), "fake-model", log, make_tools(tmp_path), "sys",
+    a = Agent(Fake(script), "fake-model", log, default_tools(), "sys",
               approve=approve, on=events.append, sleep=lambda s: None, **kw)
     return a, log, events
 
@@ -118,7 +118,7 @@ def test_log_survives_reload_and_resume(tmp_path):
     again = Log.load(log.path)
     assert [m.text for m in again.messages()] == ["one", "first"]
     assert Log.latest(str(tmp_path)).path == log.path
-    b = Agent(Fake([say("second")]), "m", again, make_tools(tmp_path), "sys")
+    b = Agent(Fake([say("second")]), "m", again, default_tools(), "sys")
     b.turn("two")
     assert [m.text for m in b.provider.requests[0][1:]] == ["one", "first", "two"]
 
@@ -134,17 +134,16 @@ def test_tree_branching_keeps_everything(tmp_path):
 
 
 def test_edit_tool_rules(tmp_path):
-    tools = make_tools(tmp_path)
+    edit = tool("edit", tmp_path)
     (tmp_path / "f.py").write_text("x = 1\nx = 1\n")
-    from diwan.tools import ToolError
     with pytest.raises(ToolError, match="2 times"):
-        tools["edit"].run(path="f.py", old="x = 1", new="x = 2")
-    tools["edit"].run(path="f.py", old="x = 1", new="x = 2", replace_all=True)
+        edit(path="f.py", old="x = 1", new="x = 2")
+    edit(path="f.py", old="x = 1", new="x = 2", replace_all=True)
     assert (tmp_path / "f.py").read_text() == "x = 2\nx = 2\n"
 
 
 def test_bash_reports_exit_code_and_stderr(tmp_path):
-    out = make_tools(tmp_path)["bash"].run(command="echo hi; echo oops >&2; exit 3")
+    out = tool("bash", tmp_path)(command="echo hi; echo oops >&2; exit 3")
     assert "hi" in out and "oops" in out and "[exit code 3]" in out
 
 
@@ -161,7 +160,7 @@ def test_ui_renders_markdown_tools_and_small_costs(tmp_path):
     a = Agent(Fake([Message("assistant", [Text("thinking"), ToolCall("c1", "bash", '{"command":"echo hi"}')]),
                     Message("assistant", [Text("My name is **Diwan**.")],
                             usage=Usage(900, 0, 0, 70, 0, 0.0000694))]),
-              "m", Log.new(cwd=str(tmp_path)), make_tools(tmp_path), "sys",
+              "m", Log.new(cwd=str(tmp_path)), default_tools(), "sys",
               approve=term.approve, on=term.on)
     a.turn("hi")
     out = console.export_text()
@@ -191,7 +190,7 @@ def test_interrupt_mid_stream_keeps_finished_blocks_signed_and_the_cut_one_apart
                      replay=Replay(None, ["sig-1", None, None]))
     fake = Fake([answer, say("ok, the README")])
     log = Log.new(cwd=str(tmp_path))
-    a = Agent(fake, "fake-model", log, make_tools(tmp_path), "sys", sleep=lambda s: None)
+    a = Agent(fake, "fake-model", log, default_tools(), "sys", sleep=lambda s: None)
     a.on = lambda ev: a.interrupt() if isinstance(ev, TextDelta) else None
     assert a.turn("fix it").reason == "interrupted"
 
@@ -215,7 +214,7 @@ def test_an_unexpected_error_ends_the_turn_not_the_session(tmp_path):
             raise RuntimeError("provider bug")
 
     log = Log.new(cwd=str(tmp_path))
-    a = Agent(Broken([]), "fake-model", log, make_tools(tmp_path), "sys")
+    a = Agent(Broken([]), "fake-model", log, default_tools(), "sys")
     ended = a.turn("hi")
     assert ended.reason == "error" and "RuntimeError: provider bug" in ended.error
     err = next(e for e in log.events if e.type == "error")

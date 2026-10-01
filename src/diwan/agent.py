@@ -19,7 +19,7 @@ from .events import (ContextChanged, ContextCleared, Reason, Retrying, StateChan
                      ToolStarted, TurnEnded, UIEvent)
 from .log import Kind, Log
 from .paths import Access, PathPolicy
-from .tools import Spec, ToolError, access
+from .tools import Tool, ToolContext, ToolError, access
 
 class Interrupted(BaseException):
     """The user stopped the turn (Agent.interrupt). A BaseException, like KeyboardInterrupt, so
@@ -42,9 +42,9 @@ class Limits:
 
 
 class Agent:
-    def __init__(self, provider: Provider, model: str, log: Log, tools: dict[str, Spec],
+    def __init__(self, provider: Provider, model: str, log: Log, tools: dict[str, Tool],
                  system: str | Callable[[str, str], str], *,
-                 approve: Callable[[ToolCall, Spec, bool], bool] = lambda c, s, outside: True,
+                 approve: Callable[[ToolCall, Tool, bool], bool] = lambda c, s, outside: True,
                  on: Callable[[UIEvent], None] = lambda e: None, limits: Limits | None = None,
                  sleep: Callable[[float], None] | None = None, paths: PathPolicy | None = None):
         self.provider, self.model, self.log, self.tools = provider, model, log, tools
@@ -88,7 +88,8 @@ class Agent:
         provider, model = provider or self.provider, model or self.model
         current = (provider.provider, model) == (self.provider.provider, self.model)
         system = self.system if current else self._prompt(provider.provider, model)
-        return self.context_manager.measure(system, [s.tool for s in self.tools.values()], provider, model)
+        tools = [t.definition for t in self.tools.values()]
+        return self.context_manager.measure(system, tools, provider, model)
 
     def _context_changed(self) -> None:
         try:
@@ -152,7 +153,7 @@ class Agent:
     def _sample(self) -> Message:
         self._maybe_clear()
         messages = [Message.system(self.system), *self.context_manager.view()]
-        tools = [s.tool for s in self.tools.values()]
+        tools = [t.definition for t in self.tools.values()]
         attempt = 0
         while True:
             self.on(StateChanged("thinking"))
@@ -220,23 +221,23 @@ class Agent:
                 self.log.add_message(Message("tool", [*results]))
 
     def _run_one(self, call: ToolCall) -> ToolResult:
-        spec = self.tools.get(call.name)
-        if spec is None:
+        tool = self.tools.get(call.name)
+        if tool is None:
             return ToolResult(call.id, f"Unknown tool `{call.name}`. Available: "
                                        f"{', '.join(self.tools)}", True)
         try:
             args = call.args()
         except ValueError as e:
             return ToolResult(call.id, f"Invalid JSON arguments: {e}", True)
-        needed = access(spec, args, self.paths)
+        needed = access(tool, args, self.paths)
         if needed is Access.DENIED:
-            result = ToolResult(call.id, self.paths.why(str(args.get(spec.path_arg or ""))), True)
+            result = ToolResult(call.id, self.paths.why(str(args.get(tool.path_arg or ""))), True)
             self.on(ToolFinished(call, result))
             return result
-        if not spec.readonly or needed is Access.ASK:
+        if not tool.readonly or needed is Access.ASK:
             self.on(StateChanged("waiting"))
             # `outside`: the call reaches beyond the project; "always" approvals don't cover it
-            allowed = self.approve(call, spec, needed is Access.ASK)
+            allowed = self.approve(call, tool, needed is Access.ASK)
             self.log.append(Kind.APPROVAL, {"call_id": call.id, "allowed": allowed})
             if not allowed:
                 result = ToolResult(call.id, "The user denied this action. Ask them how to "
@@ -246,8 +247,7 @@ class Agent:
         self.on(StateChanged("running"))
         self.on(ToolStarted(call))
         try:
-            extra = {"cancel": self._cancel} if spec.cancellable else {}
-            result = ToolResult(call.id, spec.run(**args, **extra))
+            result = ToolResult(call.id, tool.run(ToolContext(self.paths, self._cancel), **args))
         except ToolError as e:
             result = ToolResult(call.id, str(e), True)
         except TypeError as e:

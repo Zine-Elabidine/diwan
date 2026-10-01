@@ -10,7 +10,7 @@ from diwan import clearing
 from diwan.agent import Agent, Limits
 from diwan.events import ContextCleared
 from diwan.log import Log
-from diwan.tools import make_tools
+from diwan.tools import default_tools
 
 
 def history(n, size=4_000):
@@ -64,7 +64,7 @@ def test_the_agent_clears_at_half_full_records_it_and_the_gauge_drops(tmp_path):
                             Usage(input=11_000, output=10), "end"))
     events = []
     a = Agent(Fake([Message("assistant", [Text("ok")])], window=36_000), "fake-model", log,
-              make_tools(tmp_path), "sys", on=events.append, limits=Limits(max_tokens=16_000),
+              default_tools(), "sys", on=events.append, limits=Limits(max_tokens=16_000),
               sleep=lambda s: None)
     before = a.context_use
     assert before.fraction > 0.5                                # 11k of 20k usable

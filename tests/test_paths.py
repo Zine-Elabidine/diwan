@@ -10,8 +10,8 @@ from tarjuman.fake import Fake
 from diwan.agent import Agent
 from diwan.log import Log
 from diwan.paths import Access, PathPolicy
-from diwan.tools import ToolError, make_tools
-from helpers import call, say
+from diwan.tools import ToolError, default_tools
+from helpers import call, say, tool
 
 
 def policy(tmp_path):
@@ -39,10 +39,9 @@ def test_a_symlink_into_a_secret_place_is_refused(tmp_path):
 
 
 def test_the_tools_refuse_secret_places_even_when_called_directly(tmp_path):
-    p, project, home = policy(tmp_path)
-    tools = make_tools(project, p)
+    p, _, home = policy(tmp_path)
     try:
-        tools["read"].run(path=str(home / ".diwan" / "env"))
+        tool("read", p)(path=str(home / ".diwan" / "env"))
         raise AssertionError("read a secret")
     except ToolError as e:
         assert "credentials" in str(e)
@@ -52,7 +51,7 @@ def run_read(tmp_path, path, approve):
     p, project, home = policy(tmp_path)
     asked = []
     log = Log.new(cwd=str(project))
-    a = Agent(Fake([call("read", path=path(home)), say("ok")]), "m", log, make_tools(project, p),
+    a = Agent(Fake([call("read", path=path(home)), say("ok")]), "m", log, default_tools(),
               "sys", approve=lambda c, s, outside: asked.append(c.name) or approve, paths=p)
     a.turn("go")
     result = next(m for m in log.messages() if m.role == "tool").content[0]
@@ -83,7 +82,7 @@ def test_grep_skips_files_the_policy_blocks(tmp_path):
     (project / "innocent").symlink_to(home / ".diwan" / "env")
     (project / ".env").write_text("OPENROUTER_API_KEY=also-secret")
     (project / "src" / "a.py").write_text("OPENROUTER_API_KEY = os.environ[...]")
-    out = make_tools(project, p)["grep"].run(pattern="OPENROUTER")
+    out = tool("grep", p)(pattern="OPENROUTER")
     assert "src/a.py" in out
     assert "KEY=secret" not in out and "also-secret" not in out
     assert {line.split(":")[0] for line in out.splitlines()} == {"src/a.py"}
@@ -95,7 +94,7 @@ def test_always_covers_the_project_only(tmp_path):
     log = Log.new(cwd=str(project))
     a = Agent(Fake([call("write", path="in.txt", content="1"),
                     call("write", cid="c2", path=str(home / "out.txt"), content="2"), say("ok")]),
-              "m", log, make_tools(project, p), "sys", paths=p,
+              "m", log, default_tools(), "sys", paths=p,
               approve=lambda c, s, outside: asked.append((c.name, outside)) or True)
     a.turn("go")
     assert asked == [("write", False), ("write", True)]   # the second call says it's outside

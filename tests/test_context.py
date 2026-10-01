@@ -7,7 +7,7 @@ from tarjuman.fake import Fake
 
 from diwan.agent import Agent, Limits
 from diwan.log import Log
-from diwan.tools import make_tools
+from diwan.tools import default_tools
 
 
 def reply(text, prompt, output=10, **kw):
@@ -16,7 +16,7 @@ def reply(text, prompt, output=10, **kw):
 
 def make(tmp_path, script, window=100_000, max_tokens=16_000):
     log = Log.new(cwd=str(tmp_path))
-    return Agent(Fake(script, window=window), "fake-model", log, make_tools(tmp_path), "sys",
+    return Agent(Fake(script, window=window), "fake-model", log, default_tools(), "sys",
                  limits=Limits(max_tokens=max_tokens), sleep=lambda s: None)
 
 
@@ -37,7 +37,7 @@ def test_what_came_after_the_reply_is_estimated_at_the_calibrated_ratio(tmp_path
     a = make(tmp_path, [reply("ok", prompt=4_000, output=10)])
     a.turn("x" * 8_000)
     sent = [Message.system("sys"), Message.user("x" * 8_000)]
-    tools = [s.tool for s in a.tools.values()]
+    tools = [t.definition for t in a.tools.values()]
     r = tokens.ratio(sent, tools, 4_000)                    # this model's chars per token
     late = Message.user("y" * 2_000)                        # arrives after the report
     a.log.add_message(late)
@@ -49,7 +49,7 @@ def test_what_came_after_the_reply_is_estimated_at_the_calibrated_ratio(tmp_path
 
 def test_another_model_lends_its_ratio_with_a_margin_never_its_count(tmp_path):
     sent = [Message.system("sys"), Message.user("w" * 9_000)]
-    tools = [s.tool for s in make_tools(tmp_path).values()]
+    tools = [t.definition for t in default_tools().values()]
     prompt = round(tokens.chars(sent, tools) / 2.5)          # this model: 2.5 chars per token
     a = make(tmp_path, [reply("ok", prompt=prompt, output=10)])
     a.turn("w" * 9_000)
@@ -82,7 +82,7 @@ def test_a_switch_is_measured_with_the_new_models_own_prompt(tmp_path):
         return "p" * 200_000 if model == "verbose-model" else "sys"
 
     log = Log.new(cwd=str(tmp_path))
-    a = Agent(Fake([], window=1_000_000), "fake-model", log, make_tools(tmp_path), prompt)
+    a = Agent(Fake([], window=1_000_000), "fake-model", log, default_tools(), prompt)
     assert a.system == "sys"
     other = Fake([], window=40_000)
     with pytest.raises(TarjumanError):

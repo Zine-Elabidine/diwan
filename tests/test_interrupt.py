@@ -9,12 +9,12 @@ import time
 import pytest
 from tarjuman import Cancel, Message, TarjumanError
 from tarjuman.fake import Fake
-from helpers import call, say
+from helpers import call, say, tool
 
 from diwan.agent import INTERRUPTED, Agent
 from diwan.events import Retrying, ToolStarted
 from diwan.log import Log
-from diwan.tools import ToolError, make_tools
+from diwan.tools import Read, ToolError, default_tools
 
 posix = pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
 
@@ -25,12 +25,12 @@ def later(seconds, fn):
 
 @posix
 def test_aborted_command_kills_its_children_and_keeps_the_output(tmp_path):
-    bash = make_tools(tmp_path)["bash"]
     c = Cancel()
+    bash = tool("bash", tmp_path, c)
     later(0.3, c.cancel)
     start = time.monotonic()
     with pytest.raises(ToolError) as e:
-        bash.run(command="sleep 30 & echo $! > child.pid; echo started; wait", cancel=c)
+        bash(command="sleep 30 & echo $! > child.pid; echo started; wait")
     assert time.monotonic() - start < 2
     assert str(e.value).startswith("aborted by user after") and "started" in str(e.value)
     child = int((tmp_path / "child.pid").read_text())
@@ -42,12 +42,12 @@ def test_aborted_command_kills_its_children_and_keeps_the_output(tmp_path):
 @posix
 def test_timeout_also_kills_the_tree(tmp_path):
     with pytest.raises(ToolError) as e:
-        make_tools(tmp_path)["bash"].run(command="echo hi; sleep 30", timeout=0.3)
+        tool("bash", tmp_path)(command="echo hi; sleep 30", timeout=0.3)
     assert "timed out after" in str(e.value) and "hi" in str(e.value)
 
 
 def test_commands_get_no_stdin(tmp_path):
-    out = make_tools(tmp_path)["bash"].run(command="cat; echo done")
+    out = tool("bash", tmp_path)(command="cat; echo done")
     assert out.strip().endswith("done")
 
 
@@ -55,7 +55,7 @@ def test_commands_get_no_stdin(tmp_path):
 def test_esc_during_a_command_ends_the_turn_and_the_model_sees_why(tmp_path):
     log = Log.new(cwd=str(tmp_path))
     a = Agent(Fake([call("bash", command="echo working; sleep 30")]), "fake-model", log,
-              make_tools(tmp_path), "sys")
+              default_tools(), "sys")
     a.on = lambda ev: later(0.3, a.interrupt) if isinstance(ev, ToolStarted) else None
     start = time.monotonic()
     assert a.turn("run it").reason == "interrupted"
@@ -68,7 +68,7 @@ def test_esc_during_a_command_ends_the_turn_and_the_model_sees_why(tmp_path):
 def test_esc_during_a_retry_wait_returns_at_once(tmp_path):
     log = Log.new(cwd=str(tmp_path))
     a = Agent(Fake([TarjumanError("RATE_LIMIT", "slow down", retry_after=30), say("never")]),
-              "fake-model", log, make_tools(tmp_path), "sys")
+              "fake-model", log, default_tools(), "sys")
     a.on = lambda ev: later(0.1, a.interrupt) if isinstance(ev, Retrying) else None
     start = time.monotonic()
     assert a.turn("hi").reason == "interrupted"
@@ -77,19 +77,18 @@ def test_esc_during_a_retry_wait_returns_at_once(tmp_path):
 
 def test_the_next_turn_starts_with_a_fresh_signal(tmp_path):
     log = Log.new(cwd=str(tmp_path))
-    a = Agent(Fake([say("one"), say("two")]), "fake-model", log, make_tools(tmp_path), "sys")
+    a = Agent(Fake([say("one"), say("two")]), "fake-model", log, default_tools(), "sys")
     a.interrupt()                       # a stale Esc between turns
     assert a.turn("hi").reason == "done"
 
 
 def test_a_real_ctrl_c_in_a_tool_ends_the_turn_as_interrupted(tmp_path):
-    from diwan.tools import Spec
+    class Stubborn(Read):
+        def run(self, ctx, **_):
+            raise KeyboardInterrupt      # plain mode: SIGINT lands in whatever is running
 
-    def stubborn(**_):
-        raise KeyboardInterrupt          # plain mode: SIGINT lands in whatever is running
-
-    tools = make_tools(tmp_path)
-    tools["read"] = Spec(tools["read"].tool, stubborn, readonly=True)
+    tools = default_tools()
+    tools["read"] = Stubborn()
     log = Log.new(cwd=str(tmp_path))
     a = Agent(Fake([call("read", path="x")]), "fake-model", log, tools, "sys")
     assert a.turn("go").reason == "interrupted"

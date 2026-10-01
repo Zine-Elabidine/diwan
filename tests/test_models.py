@@ -9,7 +9,7 @@ from diwan.cli import start_ref
 from diwan.log import Log
 from diwan.models import Ref, Router, describe, listing, parse, switch
 from diwan.prompt import system_prompt
-from diwan.tools import make_tools
+from diwan.tools import default_tools
 
 
 def fake(name, *script):
@@ -51,7 +51,7 @@ def test_one_conversation_three_models(tmp_path, monkeypatch):
 
     router = Router("alpha")
     log = Log.new(cwd=str(tmp_path), provider="alpha", model="a-1")
-    agent = Agent(router.client("alpha"), "a-1", log, make_tools(tmp_path),
+    agent = Agent(router.client("alpha"), "a-1", log, default_tools(),
                   lambda provider, model: system_prompt(tmp_path, model, provider))
     agent.turn("hi")
 
@@ -77,7 +77,7 @@ def test_failed_switch_leaves_the_agent_alone(tmp_path, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     router = Router("openrouter")
     log = Log.new(cwd=str(tmp_path))
-    agent = Agent(router.client("openrouter"), "m", log, make_tools(tmp_path), "sys")
+    agent = Agent(router.client("openrouter"), "m", log, default_tools(), "sys")
     with pytest.raises(TarjumanError):
         switch(agent, router, "anthropic:claude-x")
     assert (agent.provider.provider, agent.model) == ("openrouter", "m")

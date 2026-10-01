@@ -14,7 +14,7 @@ from diwan.agent import Agent
 from diwan.log import Log
 from diwan.models import Ref, Router
 from diwan.session import Approvals, Session
-from diwan.tools import make_tools
+from diwan.tools import default_tools
 from diwan.tui import Approval, DiwanApp
 
 
@@ -82,7 +82,7 @@ def test_plain_unknown_prefix_is_a_model_id_on_the_current_provider(monkeypatch,
 
 def make_app(tmp_path, script):
     def make_agent(log, ref):
-        return Agent(Fake(list(script)), ref.model, log, make_tools(tmp_path), "sys")
+        return Agent(Fake(list(script)), ref.model, log, default_tools(), "sys")
     return DiwanApp(make_agent, Log.new(cwd=str(tmp_path)), tmp_path, Router("openrouter"),
                     Ref("openrouter", "deepseek/deepseek-v4-flash"))
 
@@ -153,7 +153,7 @@ async def test_tui_honours_approve_everything(tmp_path):
                                                                        "content": "hi"}))]),
               Message("assistant", [Text("written")])]
     app = DiwanApp(lambda log, ref: Agent(Fake(list(script)), ref.model, log,
-                                          make_tools(tmp_path), "sys"),
+                                          default_tools(), "sys"),
                    Log.new(cwd=str(tmp_path)), tmp_path, Router("openrouter"),
                    Ref("openrouter", "m"), approvals=Approvals(auto=True))
     async with app.run_test(size=(100, 30)) as pilot:
@@ -164,7 +164,7 @@ async def test_tui_honours_approve_everything(tmp_path):
 
 
 def test_busy_refuses_what_changes_the_conversation(tmp_path):
-    s = Session(lambda log, ref: Agent(Fake([]), ref.model, log, make_tools(tmp_path), "sys"),
+    s = Session(lambda log, ref: Agent(Fake([]), ref.model, log, default_tools(), "sys"),
                 Log.new(cwd=str(tmp_path)), Ref("openrouter", "m"), Router("openrouter"),
                 tmp_path)
     for text in ("/new", "/model other"):

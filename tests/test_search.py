@@ -4,7 +4,8 @@ import time
 
 import pytest
 
-from diwan.tools import ToolError, make_tools
+from diwan.tools import ToolError
+from helpers import tool
 
 
 @pytest.fixture
@@ -25,8 +26,7 @@ def project(tmp_path):
 
 
 def tools(root):
-    t = make_tools(root)
-    return t["grep"].run, t["glob"].run
+    return tool("grep", root), tool("glob", root)
 
 
 def test_glob_matches_at_any_depth_and_skips_heavy_folders(project):
