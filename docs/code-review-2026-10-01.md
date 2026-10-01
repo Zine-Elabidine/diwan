@@ -246,7 +246,29 @@ finding says otherwise.
   - 14: pyright is at 0 and blocking in both repos.
 
   Reaching 0 surfaced one real bug: glob used `Path.full_match`, which Python 3.12 doesn't have, so Diwan now requires 3.13. A live smoke test passed: `-p` with tools, and a session with `/model`, `/cost` and `/exit`.
-- **Phase 3:** next.
+- **Phase 3 done** (2026-10-01).
+  - First, tests that pinned each slash command in both front-ends. Plain-mode coverage went from 24% to 79%.
+  - Then:
+    - `session.py` (`Session`, `Approvals`);
+    - `commands.py`, a registry that also generates `/help`;
+    - `present.py`, the shared formatting, previews and turn mark;
+    - `tools/`, a `Tool` class per tool and a `ToolContext` on every call. A test keeps each schema equal to its `run()` signature. The definitions sent to the model are byte-identical.
+  - Behaviour changes, each in a commit message and visible in the test diff:
+    - `/cost` and the totals mean this session in both front-ends;
+    - unknown commands read the same in both;
+    - the app honours `-y`;
+    - the app's help lost `[provider]` and `[text]` to markup;
+    - edit previews say how many lines are hidden.
+  - Left as is, on purpose: each front-end still has its own event `isinstance` chain. They render differently (Rich live region vs Textual widgets), and the shared parts sit in `present.py`.
+
+**After the three phases:**
+
+| | Diwan | Tarjuman |
+|---|---|---|
+| Source lines | 2,450 | 1,865 |
+| Tests | 77 passing | 79 passing |
+| Coverage | 90% (`cli.py` 79%, `tui.py` 90%) | 94% |
+| ruff / pyright | 0 / 0, both blocking | 0 / 0, both blocking |
 
 ---
 
