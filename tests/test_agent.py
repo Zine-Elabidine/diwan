@@ -4,7 +4,8 @@ from tarjuman import (Finish, Message, Reasoning, Replay, TarjumanError, Text, T
                       Usage)
 from tarjuman.fake import Fake
 
-from diwan.agent import INTERRUPTED, Agent, Limits, ToolFinished
+from diwan.agent import INTERRUPTED, Agent, Limits
+from diwan.events import ToolFinished
 from diwan.log import Log
 from diwan.tools import make_tools
 from helpers import call, say

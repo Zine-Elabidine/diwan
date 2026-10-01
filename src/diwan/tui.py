@@ -22,8 +22,9 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Markdown, Static, TextArea, Tree
 
 from . import __version__
-from .agent import (Agent, ContextCleared, Retrying, StateChanged, ToolFinished, ToolStarted,
-                    TurnEnded, UIEvent)
+from .agent import Agent
+from .events import (ContextCleared, Retrying, StateChanged, ToolFinished, ToolStarted, TurnEnded,
+                     UIEvent)
 from .log import Log
 from .models import Ref, Router, describe, listing, switch
 from .tools import Spec

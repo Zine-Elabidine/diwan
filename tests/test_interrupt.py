@@ -11,7 +11,8 @@ from tarjuman import Cancel, Message, TarjumanError
 from tarjuman.fake import Fake
 from helpers import call, say
 
-from diwan.agent import INTERRUPTED, Agent, Retrying, ToolStarted
+from diwan.agent import INTERRUPTED, Agent
+from diwan.events import Retrying, ToolStarted
 from diwan.log import Log
 from diwan.tools import ToolError, make_tools
 

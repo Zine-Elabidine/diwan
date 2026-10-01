@@ -7,7 +7,8 @@ from tarjuman import Message, Text, ToolCall, ToolResult, Usage
 from tarjuman.fake import Fake
 
 from diwan import clearing
-from diwan.agent import Agent, ContextCleared, Limits
+from diwan.agent import Agent, Limits
+from diwan.events import ContextCleared
 from diwan.log import Log
 from diwan.tools import make_tools
 

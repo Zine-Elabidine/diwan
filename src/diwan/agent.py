@@ -7,23 +7,24 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any
 
 from tarjuman import (BlockEnd, BlockStart, Cancel, Event, Finish, Message, Provider, Reasoning,
                       ReasoningDelta, Replay, TarjumanError, Text, TextDelta, ToolCall,
                       ToolCallDelta, ToolResult, Unknown, Usage, errors, tokens)
 
 from . import clearing
+from .context import ContextUse
+from .events import (ContextChanged, ContextCleared, Reason, Retrying, StateChanged, ToolFinished,
+                     ToolStarted, TurnEnded, UIEvent)
 from .log import Log
 from .paths import Access, PathPolicy
 from .tools import Spec, ToolError, access
 
-State = Literal["thinking", "running", "waiting", "idle"]
-Reason = Literal["done", "max_tokens", "max_steps", "interrupted", "error"]
-
 # another model's chars-per-token, reused for this one, assumes 15% more tokens (tokenizers differ;
 # measured: DeepSeek 3.08, Claude 2.68 on the same session)
 OTHER_TOKENIZER = 0.85
+
 
 class Interrupted(BaseException):
     """The user stopped the turn (Agent.interrupt). A BaseException, like KeyboardInterrupt, so
@@ -35,67 +36,6 @@ STOPS = (Interrupted, KeyboardInterrupt)
 
 INTERRUPTED = ("The user interrupted the previous turn on purpose. If a tool call was cut off, "
                "it may have partly run: check before repeating it.")
-
-
-# --- what the loop tells the UI ---------------------------------------------------------------
-
-@dataclass
-class StateChanged:
-    state: State
-
-
-@dataclass
-class ToolStarted:
-    call: ToolCall
-
-
-@dataclass
-class ToolFinished:
-    call: ToolCall
-    result: ToolResult
-
-
-@dataclass
-class Retrying:
-    error: TarjumanError
-    attempt: int
-    wait: float
-
-
-@dataclass
-class ContextUse:
-    """How full the context is, in the current model's own tokens."""
-    used: int             # tokens the next request will hold
-    window: int | None    # the model's context window, if known
-    usable: int | None    # the window minus the room kept for the answer
-    exact: bool           # True right after a reply from this model; otherwise partly estimated
-
-    @property
-    def fraction(self) -> float | None:
-        return self.used / self.usable if self.usable else None
-
-
-@dataclass
-class ContextChanged:
-    context: ContextUse
-
-
-@dataclass
-class ContextCleared:
-    """Old tool outputs were cleared to save context (the log keeps them)."""
-    text: str
-
-
-@dataclass
-class TurnEnded:
-    reason: Reason
-    steps: int
-    usage: Usage
-    error: str | None = None
-
-
-UIEvent = (StateChanged | ToolStarted | ToolFinished | Retrying | TurnEnded | ContextChanged
-           | ContextCleared | Event)
 
 
 @dataclass

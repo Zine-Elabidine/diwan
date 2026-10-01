@@ -13,8 +13,9 @@ from rich.spinner import Spinner
 from rich.text import Text
 from tarjuman import BlockStart, ReasoningDelta, TextDelta, ToolCall, ToolCallDelta, Usage
 
-from .agent import (ContextChanged, ContextCleared, ContextUse, Retrying, StateChanged,
-                    ToolFinished, ToolStarted, TurnEnded, UIEvent)
+from .context import ContextUse
+from .events import (ContextChanged, ContextCleared, Retrying, StateChanged, ToolFinished,
+                     ToolStarted, TurnEnded, UIEvent)
 from .tools import Spec
 
 TOOL_LINES = 4
