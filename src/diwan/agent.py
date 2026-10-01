@@ -17,7 +17,7 @@ from . import clearing
 from .context import ContextManager, ContextUse
 from .events import (ContextChanged, ContextCleared, Reason, Retrying, StateChanged, ToolFinished,
                      ToolStarted, TurnEnded, UIEvent)
-from .log import Log
+from .log import Kind, Log
 from .paths import Access, PathPolicy
 from .tools import Spec, ToolError, access
 
@@ -76,7 +76,7 @@ class Agent:
                 "model with a bigger window, or start a new session with /new.")
         self.provider, self.model = provider, model
         self.system = self._prompt(provider.provider, model)
-        self.log.append("model_switch", {"provider": provider.provider, "model": model})
+        self.log.append(Kind.MODEL_SWITCH, {"provider": provider.provider, "model": model})
         self.log.add_message(Message.system(
             f"The conversation now continues on `{model}` (via {provider.provider}). Earlier "
             "replies may have been written by other models."))
@@ -94,7 +94,7 @@ class Agent:
         try:
             self.context_use = self.context()
         except Exception as e:  # the gauge is informative: a bug in it must not stop the turn
-            self.log.append("error", {"code": "INTERNAL", "message": f"context: {e!r}",
+            self.log.append(Kind.ERROR, {"code": "INTERNAL", "message": f"context: {e!r}",
                                       "traceback": traceback.format_exc()})
             return
         self.on(ContextChanged(self.context_use))
@@ -136,7 +136,7 @@ class Agent:
         except TarjumanError as e:
             return self._end("error", steps, usage, str(e))
         except Exception as e:  # a bug must end the turn, never the session
-            self.log.append("error", {"code": "INTERNAL", "message": repr(e),
+            self.log.append(Kind.ERROR, {"code": "INTERNAL", "message": repr(e),
                                       "traceback": traceback.format_exc()})
             return self._end("error", steps, usage,
                              f"{type(e).__name__}: {e} (an error in Diwan; the session log has details)")
@@ -179,7 +179,7 @@ class Agent:
                     raise Interrupted from None
                 attempt += 1
                 # failed attempts are logged but never become part of the conversation
-                self.log.append("error", {"code": e.code, "message": e.message, "attempt": attempt})
+                self.log.append(Kind.ERROR, {"code": e.code, "message": e.message, "attempt": attempt})
                 if not e.retryable or attempt > self.limits.max_retries:
                     raise
                 wait = e.retry_after or min(2 ** attempt, 30)
@@ -237,7 +237,7 @@ class Agent:
             self.on(StateChanged("waiting"))
             # `outside`: the call reaches beyond the project; "always" approvals don't cover it
             allowed = self.approve(call, spec, needed is Access.ASK)
-            self.log.append("approval", {"call_id": call.id, "allowed": allowed})
+            self.log.append(Kind.APPROVAL, {"call_id": call.id, "allowed": allowed})
             if not allowed:
                 result = ToolResult(call.id, "The user denied this action. Ask them how to "
                                              "proceed instead of retrying.", True)
@@ -260,7 +260,7 @@ class Agent:
     def _end(self, reason: Reason, steps: int, usage: Usage, error: str | None = None) -> TurnEnded:
         self.total += usage
         self._context_changed()
-        self.log.append("turn_end", {"reason": reason, "steps": steps, "usage": usage.__dict__,
+        self.log.append(Kind.TURN_END, {"reason": reason, "steps": steps, "usage": usage.__dict__,
                                      **({"error": error} if error else {})})
         ended = TurnEnded(reason, steps, usage, error)
         self.on(StateChanged("idle"))

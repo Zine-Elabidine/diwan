@@ -11,6 +11,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,18 @@ from tarjuman import Message
 
 def sessions_dir() -> Path:
     return Path(os.environ.get("DIWAN_HOME", Path.home() / ".diwan")) / "sessions"
+
+
+class Kind(StrEnum):
+    """What an event records. Stored as its plain string, so old session files still load."""
+    SESSION = "session"            # the first event: id, cwd, provider, model
+    MESSAGE = "message"            # a conversation message (tarjuman's neutral format)
+    MASK = "mask"                  # tool outputs cleared from later requests (clearing.py)
+    MODEL_SWITCH = "model_switch"  # the conversation moved to another provider/model
+    MODEL = "model"                # the same, from older sessions (no provider)
+    APPROVAL = "approval"          # the user's answer to a tool call
+    ERROR = "error"                # a failed request or an internal error; never sent
+    TURN_END = "turn_end"          # why a turn stopped, its steps and usage
 
 
 @dataclass
@@ -39,9 +52,9 @@ class _Branch:
     mask_points: list[int] = field(default_factory=list)
 
     def add(self, e: Event) -> None:
-        if e.type == "message":
+        if e.type == Kind.MESSAGE:
             self.messages.append(Message.from_dict(e.data))
-        elif e.type == "mask":
+        elif e.type == Kind.MASK:
             self.masked.update(e.data["entries"])
             self.mask_points.append(len(self.messages))
         self.head = e.id
@@ -61,7 +74,7 @@ class Log:
         d.mkdir(parents=True, exist_ok=True)
         sid = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
         log = cls(d / f"{sid}.jsonl", [])
-        log.append("session", {"id": sid, **meta})
+        log.append(Kind.SESSION, {"id": sid, **meta})
         return log
 
     @classmethod
@@ -87,7 +100,7 @@ class Log:
     def id(self) -> str:
         return self.events[0].data["id"]
 
-    def append(self, type: str, data: dict[str, Any]) -> str:
+    def append(self, type: Kind, data: dict[str, Any]) -> str:
         e = Event(uuid.uuid4().hex[:12], self.head, type, data)
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(e.__dict__, ensure_ascii=False) + "\n")
@@ -99,7 +112,7 @@ class Log:
         return e.id
 
     def add_message(self, m: Message) -> str:
-        return self.append("message", m.to_dict())
+        return self.append(Kind.MESSAGE, m.to_dict())
 
     def path_to_head(self) -> list[Event]:
         out, cur = [], self.head
@@ -139,8 +152,8 @@ class Log:
         start = self.events[0].data if self.events else {}
         provider, model = start.get("provider"), start.get("model")
         for e in self.path_to_head():
-            if e.type == "model_switch":
+            if e.type == Kind.MODEL_SWITCH:
                 provider, model = e.data.get("provider"), e.data.get("model")
-            elif e.type == "model":
+            elif e.type == Kind.MODEL:
                 model = e.data.get("model")
         return provider, model

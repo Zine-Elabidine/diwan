@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from tarjuman import Message, Provider, Tool, tokens
 
 from . import clearing
-from .log import Log
+from .log import Kind, Log
 
 # another model's chars-per-token, reused for this one, assumes 15% more tokens (tokenizers differ;
 # measured: DeepSeek 3.08, Claude 2.68 on the same session)
@@ -99,7 +99,7 @@ class ContextManager:
             return None
         p = clearing.plan(self.log.messages(), self.log.masked(), use.usable, use.chars_per_token)
         if p is not None:
-            self.log.append("mask", {"entries": p.entries, "saved": p.saved})
+            self.log.append(Kind.MASK, {"entries": p.entries, "saved": p.saved})
         return p
 
 
