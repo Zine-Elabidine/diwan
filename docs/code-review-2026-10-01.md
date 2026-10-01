@@ -232,6 +232,22 @@ manager instead of `agent.py`.
 Each step is its own commit with all tests green, and behaviour is unchanged unless the
 finding says otherwise.
 
+## Progress
+
+- **Phase 1 done** (2026-10-01): findings 1, 2, 3, 3b, 11, 15, 16, 17.
+- **Phase 2 done** (2026-10-01):
+  - 5: `tarjuman.Provider` and `HTTPProvider` (Tarjuman 4b1203e);
+  - 13: `connect(app=App(...))`;
+  - 8: the branch state is cached by head (0.02 ms per step instead of 9.2 at 2,000 messages), and event kinds are a `Kind` enum;
+  - 10: `Interrupted`;
+  - 9: the prompt builder; the `/model` fit check now measures the new model's own prompt;
+  - 4: `events.py`, `ContextManager` in `context.py`, `clearing.py`;
+  - 12: the renames;
+  - 14: pyright is at 0 and blocking in both repos.
+
+  Reaching 0 surfaced one real bug: glob used `Path.full_match`, which Python 3.12 doesn't have, so Diwan now requires 3.13. A live smoke test passed: `-p` with tools, and a session with `/model`, `/cost` and `/exit`.
+- **Phase 3:** next.
+
 ---
 
 ## Target layout (decided before phase 2, so nothing is renamed twice)
