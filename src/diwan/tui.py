@@ -27,7 +27,8 @@ from .events import (ContextCleared, Retrying, StateChanged, ToolFinished, ToolS
                      UIEvent)
 from .log import Log
 from .models import Ref, Router
-from .present import fmt_context, fmt_cost, fmt_tokens, fmt_usage, short, summarize_call
+from .present import (fmt_context, fmt_cost, fmt_tokens, fmt_usage, preview, short,
+                      summarize_call, turn_mark)
 from .session import Approvals, Session
 from .tools import Spec
 
@@ -106,25 +107,14 @@ class ToolView(Vertical):
 
 
 def diff_text(call: ToolCall) -> RText:
-    t = RText()
+    lines = preview(call, 30)
+    if lines:
+        return RText("\n").join(RText(line, style=style) for line, style in lines)
     try:
-        a = call.args()
+        call.args()
     except ValueError:
         return RText(call.arguments[:2000])
-    if call.name == "edit":
-        for line in str(a.get("old", "")).splitlines()[:30]:
-            t.append(f"- {line}\n", style="red")
-        for line in str(a.get("new", "")).splitlines()[:30]:
-            t.append(f"+ {line}\n", style="green")
-    elif call.name == "write":
-        lines = str(a.get("content", "")).splitlines()
-        for line in lines[:30]:
-            t.append(f"+ {line}\n", style="green")
-        if len(lines) > 30:
-            t.append(f"… {len(lines) - 30} more lines", style="dim")
-    else:
-        t.append(summarize_call(call), style="bold")
-    return t
+    return RText(summarize_call(call), style="bold")
 
 
 class Approval(ModalScreen[str]):
@@ -455,8 +445,7 @@ class DiwanApp(App):
                                    f"(attempt {ev.attempt})", classes="notice"))
         elif isinstance(ev, TurnEnded):
             await self._close_block()
-            mark = {"done": ("✓", "green"), "interrupted": ("■ interrupted", "yellow")}.get(
-                ev.reason, (f"■ stopped: {ev.reason}", "red"))
+            mark = turn_mark(ev.reason)
             t = RText.assemble(mark, (f"  {ev.steps} step{'s' if ev.steps != 1 else ''} · "
                                       f"{fmt_usage(ev.usage)}", "dim"))
             if ev.error:

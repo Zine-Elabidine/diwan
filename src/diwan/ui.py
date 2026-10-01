@@ -15,11 +15,13 @@ from tarjuman import BlockStart, ReasoningDelta, TextDelta, ToolCall, ToolCallDe
 from .context import ContextUse
 from .events import (ContextChanged, ContextCleared, Retrying, StateChanged, ToolFinished,
                      ToolStarted, TurnEnded, UIEvent)
-from .present import fmt_context, fmt_cost, fmt_usage, short, summarize_call
+from .present import (fmt_context, fmt_cost, fmt_usage, preview, short, summarize_call,
+                      turn_mark)
 from .session import Approvals
 from .tools import Spec
 
 TOOL_LINES = 4
+PREVIEW_LINES = 8   # of a write or edit, before approving
 
 
 class Terminal:
@@ -112,8 +114,7 @@ class Terminal:
                          style="yellow"))
         elif isinstance(ev, TurnEnded):
             self.session += ev.usage
-            mark = {"done": ("✓", "green"), "interrupted": ("■ interrupted", "yellow")}.get(
-                ev.reason, (f"■ stopped: {ev.reason}", "red"))
+            mark = turn_mark(ev.reason)
             footer = Text()
             footer.append(mark[0], style=mark[1])
             footer.append(f"  {ev.steps} step{'s' if ev.steps != 1 else ''} · {fmt_usage(ev.usage)}",
@@ -163,19 +164,5 @@ class Terminal:
                 return self.approvals.answer(call, full, outside)
 
     def _preview(self, call: ToolCall) -> None:
-        try:
-            a = call.args()
-        except ValueError:
-            return
-        c = self.console
-        if call.name == "edit":
-            for line in str(a.get("old", "")).splitlines()[:8]:
-                c.print(Text(f"    - {line}", style="red"))
-            for line in str(a.get("new", "")).splitlines()[:8]:
-                c.print(Text(f"    + {line}", style="green"))
-        else:
-            lines = str(a.get("content", "")).splitlines()
-            for line in lines[:6]:
-                c.print(Text(f"    + {line}", style="green"))
-            if len(lines) > 6:
-                c.print(Text(f"    … {len(lines) - 6} more lines", style="dim"))
+        for line, style in preview(call, PREVIEW_LINES):
+            self.console.print(Text(f"    {line}", style=style))

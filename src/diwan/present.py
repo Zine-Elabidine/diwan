@@ -1,5 +1,5 @@
 """How things read, the same in both front-ends: token counts, costs, the context gauge,
-one-line summaries of tool calls."""
+one-line summaries of tool calls, previews of file changes, how a turn ended."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from pathlib import Path
 from tarjuman import ToolCall, Usage
 
 from .context import ContextUse
+from .events import Reason
 
 
 def fmt_tokens(n: int) -> str:
@@ -71,3 +72,31 @@ def fmt_window(n: int) -> str:
     if n >= 1_000_000:
         return f"{n / 1_000_000:.1f}".rstrip("0").rstrip(".") + "M"
     return f"{n // 1000}k"
+
+
+def preview(call: ToolCall, limit: int) -> list[tuple[str, str]]:
+    """What a write or edit changes, as (line, style): removed lines "- ", added "+ ", at most
+    `limit` of each, then how many more. Empty for other calls or unreadable arguments."""
+    try:
+        a = call.args()
+    except ValueError:
+        return []
+    if call.name == "edit":
+        parts = [("- ", "red", a.get("old", "")), ("+ ", "green", a.get("new", ""))]
+    elif call.name == "write":
+        parts = [("+ ", "green", a.get("content", ""))]
+    else:
+        return []
+    out: list[tuple[str, str]] = []
+    for sign, style, text in parts:
+        lines = str(text).splitlines()
+        out += [(sign + line, style) for line in lines[:limit]]
+        if len(lines) > limit:
+            out.append((f"… {len(lines) - limit} more lines", "dim"))
+    return out
+
+
+def turn_mark(reason: Reason) -> tuple[str, str]:
+    """The mark at the start of a turn's footer, and its style."""
+    return {"done": ("✓", "green"), "interrupted": ("■ interrupted", "yellow")}.get(
+        reason, (f"■ stopped: {reason}", "red"))
