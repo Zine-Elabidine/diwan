@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
+from tarjuman import limits
 from tarjuman import (BlockEnd, BlockStart, Cancel, Event, Finish, Message, Reasoning, ReasoningDelta,
                       Replay, TarjumanError, Text, TextDelta, Tool, ToolCall, ToolCallDelta,
                       ToolResult, Unknown, Usage)
@@ -16,6 +17,10 @@ from .tools import Spec, ToolError
 
 State = Literal["thinking", "running", "waiting", "idle"]
 Reason = Literal["done", "max_tokens", "max_steps", "interrupted", "error"]
+
+# another model's chars-per-token, reused for this one, assumes 15% more tokens (tokenizers differ;
+# measured: DeepSeek 3.08, Claude 2.68 on the same session)
+OTHER_TOKENIZER = 0.85
 
 INTERRUPTED = ("The user interrupted the previous turn on purpose. If a tool call was cut off, "
                "it may have partly run: check before repeating it.")
@@ -54,6 +59,24 @@ class Retrying:
 
 
 @dataclass
+class ContextUse:
+    """How full the context is, in the current model's own tokens."""
+    used: int             # tokens the next request will hold
+    window: int | None    # the model's context window, if known
+    usable: int | None    # the window minus the room kept for the answer
+    exact: bool           # True right after a reply from this model; otherwise partly estimated
+
+    @property
+    def fraction(self) -> float | None:
+        return self.used / self.usable if self.usable else None
+
+
+@dataclass
+class ContextChanged:
+    context: ContextUse
+
+
+@dataclass
 class TurnEnded:
     reason: Reason
     steps: int
@@ -61,7 +84,8 @@ class TurnEnded:
     error: str | None = None
 
 
-UIEvent = StateChanged | ToolStarted | ToolFinished | Retrying | TurnEnded | Event
+UIEvent = (StateChanged | ToolStarted | ToolFinished | Retrying | TurnEnded | ContextChanged
+           | Event)
 
 
 @dataclass
@@ -82,17 +106,66 @@ class Agent:
         self.sleep = sleep  # for tests; by default retry waits end early on interrupt
         self.total = Usage()
         self._cancel = Cancel()
+        self.context_use = self.context()
 
     def use(self, provider: Provider, model: str, system: str) -> None:
         """Continue the same conversation on another model, maybe through another provider.
-        Tarjuman adapts the history on the next request (docs/format.md in tarjuman)."""
+        Tarjuman adapts the history on the next request (docs/format.md in tarjuman). Refuses
+        (TarjumanError) when the history doesn't fit the new model's window."""
         if (provider.provider, model) == (self.provider.provider, self.model):
             return
+        fit = self.context(provider, model)
+        if fit.usable and fit.used > fit.usable:
+            raise TarjumanError(
+                "CONTEXT_WINDOW_EXCEEDED",
+                f"this conversation is about {fit.used:,} tokens for {model}, more than the "
+                f"{fit.usable:,} it can take ({fit.window:,} minus room for the answer). Pick a "
+                "model with a bigger window, or start a new session with /new.")
         self.provider, self.model, self.system = provider, model, system
         self.log.append("model_switch", {"provider": provider.provider, "model": model})
         self.log.add_message(Message.system(
             f"The conversation now continues on `{model}` (via {provider.provider}). Earlier "
             "replies may have been written by other models."))
+        self._context_changed()
+
+    def context(self, provider: Provider | None = None, model: str | None = None) -> ContextUse:
+        """How many tokens the next request holds, counted for `model` (default: the current
+        one). Exact from this model's last usage report, plus an estimate for what came after it,
+        at a chars-per-token ratio calibrated on that report. With no report from this model
+        (a new session, or right after /model) the whole history is estimated."""
+        provider, model = provider or self.provider, model or self.model
+        request = [Message.system(self.system), *self.log.messages()]
+        tools = [s.tool for s in self.tools.values()]
+        used, exact, borrowed = None, False, None
+        for i in range(len(request) - 1, 0, -1):
+            m = request[i]
+            prompt = (m.usage.input + m.usage.cache_read + m.usage.cache_write) if m.usage else 0
+            if m.role != "assistant" or not prompt:
+                continue
+            ratio = limits.ratio(request[:i], tools, prompt)
+            if m.model != model or m.provider != provider.provider:
+                borrowed = borrowed or ratio   # the most recent other model's, as a fallback
+                continue
+            after = request[i + 1:]
+            used = prompt + m.usage.output + (
+                limits.estimate(after, None, ratio or limits.CHARS_PER_TOKEN) if after else 0)
+            exact = not after
+            break
+        if used is None:
+            # no report from this model: the same text measured on another model, plus a margin
+            # for a different tokenizer; else the default
+            ratio = min(borrowed * OTHER_TOKENIZER, limits.CHARS_PER_TOKEN) if borrowed \
+                else limits.CHARS_PER_TOKEN
+            used = limits.estimate(request, tools, ratio)
+        window = _ask(provider, "context_window", model)
+        info = _ask(provider, "info", model)
+        reserve = min(self.limits.max_tokens, info.max_output) if info and info.max_output \
+            else self.limits.max_tokens
+        return ContextUse(used, window, max(window - reserve, 0) if window else None, exact)
+
+    def _context_changed(self) -> None:
+        self.context_use = self.context()
+        self.on(ContextChanged(self.context_use))
 
     def interrupt(self) -> None:
         """Stop the running turn now (safe from any thread). One signal reaches everything the
@@ -118,6 +191,7 @@ class Agent:
                 msg = self._sample()
                 usage += msg.usage or Usage()
                 self.log.add_message(msg)
+                self._context_changed()
                 if msg.stop == "max_tokens":
                     return self._end("max_tokens", steps, usage)
                 if not msg.tool_calls:
@@ -235,12 +309,22 @@ class Agent:
 
     def _end(self, reason: Reason, steps: int, usage: Usage, error: str | None = None) -> TurnEnded:
         self.total += usage
+        self._context_changed()
         self.log.append("turn_end", {"reason": reason, "steps": steps, "usage": usage.__dict__,
                                      **({"error": error} if error else {})})
         ended = TurnEnded(reason, steps, usage, error)
         self.on(StateChanged("idle"))
         self.on(ended)
         return ended
+
+
+def _ask(provider: Any, method: str, model: str) -> Any:
+    """Optional knowledge from the provider (window, catalog info); None if it has none."""
+    fn = getattr(provider, method, None)
+    try:
+        return fn(model) if fn else None
+    except Exception:  # a lookup must never break the session
+        return None
 
 
 def _collect(blocks: list[Any], ev: Event) -> None:

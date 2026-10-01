@@ -3,6 +3,7 @@ the app thread, which draws them. Approvals are modal dialogs the agent thread w
 
 from __future__ import annotations
 
+import threading
 import time
 from concurrent.futures import Future
 from pathlib import Path
@@ -26,7 +27,7 @@ from .agent import (Agent, Retrying, StateChanged, ToolFinished, ToolStarted, Tu
 from .log import Log
 from .models import Ref, Router, describe, listing, switch
 from .tools import Spec
-from .ui import fmt_cost, fmt_tokens, fmt_usage, short, summarize_call
+from .ui import fmt_context, fmt_cost, fmt_tokens, fmt_usage, short, summarize_call
 
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 PREVIEW_LINES = 8
@@ -207,7 +208,7 @@ class DiwanApp(App):
         self.first_prompt = first_prompt
         self.agent = make_agent(log, ref)
         self.agent.approve = self._approve_from_thread
-        self.agent.on = lambda ev: self.call_from_thread(self.handle, ev)
+        self.agent.on = self._from_agent
         self.running = False
         self.state = "idle"
         self.session = Usage()
@@ -239,6 +240,13 @@ class DiwanApp(App):
         if self.first_prompt:
             self.submit(self.first_prompt)
 
+    def _from_agent(self, ev: object) -> None:
+        """Agent events arrive from its worker thread, except during /model (main thread)."""
+        if threading.current_thread() is threading.main_thread():
+            self.call_later(self.handle, ev)
+        else:
+            self.call_from_thread(self.handle, ev)
+
     def _update_top(self) -> None:
         self.query_one("#top", Static).update(RText.assemble(
             ("diwan ", "bold cyan"), (f"{__version__} · ", "dim"), (str(self.ref), "bold"),
@@ -267,6 +275,8 @@ class DiwanApp(App):
         total_in = self.session.input + self.session.cache_read + self.session.cache_write
         t.append(f"   {fmt_tokens(total_in)} in · {fmt_tokens(self.session.output)} out · {cost}",
                  style="dim")
+        ctx, style = fmt_context(self.agent.context_use)
+        t.append(f"   {ctx}", style=style)
         t.append("   ctrl+t reasoning · ctrl+b agents · /help", style="dim")
         self.status.update(t)
 
@@ -349,7 +359,7 @@ class DiwanApp(App):
                                        model=self.ref.model, diwan=__version__)
             self.agent = self.make_agent(self.session_log, self.ref)
             self.agent.approve = self._approve_from_thread
-            self.agent.on = lambda ev: self.call_from_thread(self.handle, ev)
+            self.agent.on = self._from_agent
             self.chat.remove_children()
             self._update_top()
             self.notify(f"new session {self.session_log.id}")

@@ -14,14 +14,29 @@ from rich.text import Text
 
 from tarjuman import BlockStart, ReasoningDelta, TextDelta, ToolCall, ToolCallDelta, Usage
 
-from .agent import Retrying, StateChanged, ToolFinished, ToolStarted, TurnEnded, UIEvent
+from .agent import (ContextChanged, ContextUse, Retrying, StateChanged, ToolFinished, ToolStarted, TurnEnded,
+                    UIEvent)
 from .tools import Spec
 
 TOOL_LINES = 4
 
 
 def fmt_tokens(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
     return f"{n / 1000:.1f}k" if n >= 1000 else str(n)
+
+
+def fmt_context(c: ContextUse) -> tuple[str, str]:
+    """`ctx 23.4k / 1.0M · 2%` and a style that warms up as it fills. `~` = partly estimated
+    (no reply from this model since the last change)."""
+    used = ("" if c.exact else "~") + fmt_tokens(c.used)
+    if c.usable is None:
+        return f"ctx {used}", "dim"
+    f = c.fraction or 0
+    style = "red" if f >= 0.8 else "yellow" if f >= 0.5 else "dim"
+    pct = "<1%" if 0 < f < 0.01 else f"{f:.0%}"
+    return f"ctx {used} / {fmt_tokens(c.usable)} · {pct}", style
 
 
 def fmt_cost(c: float) -> str:
@@ -71,6 +86,7 @@ class Terminal:
         self.show_reasoning = show_reasoning
         self.always: set[str] = set()
         self.session = Usage()
+        self.context: ContextUse | None = None  # set by the agent's ContextChanged events
         self._live: Live | None = None
         self._kind: str | None = None        # "text" | "reasoning" while streaming a block
         self._buf = ""
@@ -143,6 +159,8 @@ class Terminal:
                 c.print(Text(("  ⎿ " if i == 0 else "    ") + short(line)[:200], style=style))
             if len(lines) > TOOL_LINES:
                 c.print(Text(f"    … {len(lines) - TOOL_LINES} more lines", style="dim"))
+        elif isinstance(ev, ContextChanged):
+            self.context = ev.context
         elif isinstance(ev, Retrying):
             c.print(Text(f"  {ev.error.code}, retrying in {ev.wait:.0f}s (attempt {ev.attempt})",
                          style="yellow"))
@@ -156,6 +174,9 @@ class Terminal:
                           style="dim")
             if self.session.cost is not None:
                 footer.append(f" · session {fmt_cost(self.session.cost)}", style="dim")
+            if self.context is not None:
+                text, style = fmt_context(self.context)
+                footer.append(f" · {text}", style=style)
             c.print(footer)
             if ev.error:
                 c.print(Text(f"  {ev.error}", style="red"))
