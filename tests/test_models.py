@@ -8,6 +8,7 @@ from diwan.agent import Agent
 from diwan.cli import start_ref
 from diwan.log import Log
 from diwan.models import Ref, Router, describe, listing, parse, switch
+from diwan.prompt import system_prompt
 from diwan.tools import make_tools
 
 
@@ -50,10 +51,11 @@ def test_one_conversation_three_models(tmp_path, monkeypatch):
 
     router = Router("alpha")
     log = Log.new(cwd=str(tmp_path), provider="alpha", model="a-1")
-    agent = Agent(router.client("alpha"), "a-1", log, make_tools(tmp_path), "sys")
+    agent = Agent(router.client("alpha"), "a-1", log, make_tools(tmp_path),
+                  lambda provider, model: system_prompt(tmp_path, model, provider))
     agent.turn("hi")
 
-    assert switch(agent, router, "beta:b-1", tmp_path) == Ref("beta", "b-1")
+    assert switch(agent, router, "beta:b-1") == Ref("beta", "b-1")
     agent.turn("and you?")
     sent = beta.requests[-1]
     assert "`b-1`" in sent[0].text                                         # its own system prompt
@@ -62,7 +64,7 @@ def test_one_conversation_three_models(tmp_path, monkeypatch):
     assert alpha_turn.replay is None                                       # alpha's data never leaks
     assert "now continues on `b-1`" in sent[3].text                        # the switch, as a reminder
 
-    switch(agent, router, "alpha:a-1", tmp_path)
+    switch(agent, router, "alpha:a-1")
     agent.turn("back to you")
     back = alpha.requests[-1]
     own = next(m for m in back if m.role == "assistant" and m.provider == "alpha")
@@ -77,7 +79,7 @@ def test_failed_switch_leaves_the_agent_alone(tmp_path, monkeypatch):
     log = Log.new(cwd=str(tmp_path))
     agent = Agent(router.client("openrouter"), "m", log, make_tools(tmp_path), "sys")
     with pytest.raises(TarjumanError):
-        switch(agent, router, "anthropic:claude-x", tmp_path)
+        switch(agent, router, "anthropic:claude-x")
     assert (agent.provider.provider, agent.model) == ("openrouter", "m")
     assert not [e for e in log.events if e.type == "model_switch"]
 

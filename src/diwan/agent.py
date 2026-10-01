@@ -108,12 +108,16 @@ class Limits:
 
 class Agent:
     def __init__(self, provider: Provider, model: str, log: Log, tools: dict[str, Spec],
-                 system: str, *,
+                 system: str | Callable[[str, str], str], *,
                  approve: Callable[[ToolCall, Spec, bool], bool] = lambda c, s, outside: True,
                  on: Callable[[UIEvent], None] = lambda e: None, limits: Limits | None = None,
                  sleep: Callable[[float], None] | None = None, paths: PathPolicy | None = None):
         self.provider, self.model, self.log, self.tools = provider, model, log, tools
-        self.system, self.approve, self.on = system, approve, on
+        # the system prompt names the model, so it is built again for each one
+        self._prompt: Callable[[str, str], str] = (
+            system if callable(system) else _fixed(system))
+        self.system = self._prompt(provider.provider, model)
+        self.approve, self.on = approve, on
         self.limits = limits or Limits()
         self.sleep = sleep  # for tests; by default retry waits end early on interrupt
         self.paths = paths or PathPolicy(Path(log.events[0].data.get("cwd") or "."))
@@ -122,7 +126,7 @@ class Agent:
         self._ratio = tokens.CHARS_PER_TOKEN   # the current model's chars per token, from context()
         self.context_use = self.context()
 
-    def use(self, provider: Provider, model: str, system: str) -> None:
+    def use(self, provider: Provider, model: str) -> None:
         """Continue the same conversation on another model, maybe through another provider.
         Tarjuman adapts the history on the next request (docs/format.md in tarjuman). Refuses
         (TarjumanError) when the history doesn't fit the new model's window."""
@@ -135,7 +139,8 @@ class Agent:
                 f"this conversation is about {fit.used:,} tokens for {model}, more than the "
                 f"{fit.usable:,} it can take ({fit.window:,} minus room for the answer). Pick a "
                 "model with a bigger window, or start a new session with /new.")
-        self.provider, self.model, self.system = provider, model, system
+        self.provider, self.model = provider, model
+        self.system = self._prompt(provider.provider, model)
         self.log.append("model_switch", {"provider": provider.provider, "model": model})
         self.log.add_message(Message.system(
             f"The conversation now continues on `{model}` (via {provider.provider}). Earlier "
@@ -148,7 +153,9 @@ class Agent:
         at a chars-per-token ratio calibrated on that report. With no report from this model
         (a new session, or right after /model) the whole history is estimated."""
         provider, model = provider or self.provider, model or self.model
-        request = [Message.system(self.system), *self._view()]
+        current = (provider.provider, model) == (self.provider.provider, self.model)
+        system = self.system if current else self._prompt(provider.provider, model)
+        request = [Message.system(system), *self._view()]
         tools = [s.tool for s in self.tools.values()]
         used, exact, borrowed = None, False, None
         for i in range(len(request) - 1, 0, -1):
@@ -181,7 +188,7 @@ class Agent:
         info = _ask(provider.info, model)
         reserve = min(self.limits.max_tokens, info.max_output) if info and info.max_output \
             else self.limits.max_tokens
-        if (provider, model) == (self.provider, self.model):
+        if current:
             self._ratio = ratio
         return ContextUse(used, window, max(window - reserve, 0) if window else None, exact)
 
@@ -371,6 +378,10 @@ class Agent:
         self.on(StateChanged("idle"))
         self.on(ended)
         return ended
+
+
+def _fixed(system: str) -> Callable[[str, str], str]:
+    return lambda provider, model: system
 
 
 def _ask[T](lookup: Callable[[str], T | None], model: str) -> T | None:

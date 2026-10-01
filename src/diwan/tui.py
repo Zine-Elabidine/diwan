@@ -342,7 +342,7 @@ class DiwanApp(App):
                 return
             try:
                 if rest:
-                    self.ref = switch(self.agent, self.router, rest, self.cwd)
+                    self.ref = switch(self.agent, self.router, rest)
                     self._update_top()
                     self._update_agents()
                 self.notify(describe(self.ref))

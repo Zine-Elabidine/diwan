@@ -68,13 +68,28 @@ def test_a_switch_that_doesnt_fit_is_refused_and_changes_nothing(tmp_path):
     small = Fake([], window=40_000)
     small.provider = "small"
     with pytest.raises(TarjumanError) as e:
-        a.use(small, "tiny-model", "sys")
+        a.use(small, "tiny-model")
     assert e.value.code == "CONTEXT_WINDOW_EXCEEDED" and "tiny-model" in str(e.value)
     assert a.model == "fake-model"
     big = Fake([], window=2_000_000)
     big.provider = "big"
-    a.use(big, "huge-model", "sys")
+    a.use(big, "huge-model")
     assert a.model == "huge-model" and not a.context_use.exact
+
+
+def test_a_switch_is_measured_with_the_new_models_own_prompt(tmp_path):
+    def prompt(provider, model):   # a model whose prompt alone overflows its window
+        return "p" * 200_000 if model == "verbose-model" else "sys"
+
+    log = Log.new(cwd=str(tmp_path))
+    a = Agent(Fake([], window=1_000_000), "fake-model", log, make_tools(tmp_path), prompt)
+    assert a.system == "sys"
+    other = Fake([], window=40_000)
+    with pytest.raises(TarjumanError):
+        a.use(other, "verbose-model")
+    assert a.system == "sys"
+    a.use(other, "plain-model")
+    assert a.system == "sys" and a.model == "plain-model"
 
 
 def test_unknown_window_means_no_percentage(tmp_path):

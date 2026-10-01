@@ -53,7 +53,7 @@ def build_agent(ref: Ref, log: Log, term: Terminal, cwd: Path, router: Router,
     client = router.client(ref.provider)
     paths = PathPolicy(cwd)
     return Agent(client, ref.model, log, make_tools(cwd, paths),
-                 system_prompt(cwd, ref.model, client.provider),
+                 lambda provider, model: system_prompt(cwd, model, provider),
                  approve=term.approve, on=term.on, limits=limits, paths=paths)
 
 
@@ -163,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
         elif cmd == "/model":
             try:
                 if rest:
-                    ref = switch(agent, router, rest, cwd)
+                    ref = switch(agent, router, rest)
                 c.print(Text(describe(ref), style="dim"))
             except TarjumanError as e:
                 c.print(Text(str(e), style="red"))

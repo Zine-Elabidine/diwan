@@ -8,12 +8,10 @@ created on first use and kept for the session."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 from tarjuman import App, Provider, catalog, providers
 
 from .agent import Agent
-from .prompt import system_prompt
 
 # how providers that show the calling app (OpenRouter) name Diwan
 APP = App("Diwan", "https://github.com/Zine-Elabidine/diwan")
@@ -71,12 +69,12 @@ def describe(ref: Ref) -> str:
     return " · ".join(parts)
 
 
-def switch(agent: Agent, router: Router, text: str, cwd: Path) -> Ref:
+def switch(agent: Agent, router: Router, text: str) -> Ref:
     """Move the running conversation to another model. Raises TarjumanError (unknown
     provider, missing key) and leaves the agent unchanged in that case."""
     ref = router.ref(text)
     client = router.client(ref.provider)
-    agent.use(client, ref.model, system_prompt(cwd, ref.model, client.provider))
+    agent.use(client, ref.model)
     return ref
 
 
