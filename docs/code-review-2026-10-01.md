@@ -257,7 +257,6 @@ finding says otherwise.
     - `/cost` and the totals mean this session in both front-ends;
     - unknown commands read the same in both;
     - the app honours `-y`;
-    - the app's help lost `[provider]` and `[text]` to markup;
     - edit previews say how many lines are hidden.
   - Left as is, on purpose: each front-end still has its own event `isinstance` chain. They render differently (Rich live region vs Textual widgets), and the shared parts sit in `present.py`.
 
