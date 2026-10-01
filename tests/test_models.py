@@ -45,7 +45,7 @@ def test_one_conversation_three_models(tmp_path, monkeypatch):
                  Message("assistant", [Text("alpha again")]))
     beta = fake("beta", Message("assistant", [Text("hello from beta")]))
     clients = {"alpha": alpha, "beta": beta}
-    monkeypatch.setattr(providers, "connect", lambda name, base_url=None: clients[name])
+    monkeypatch.setattr(providers, "connect", lambda name, **kw: clients[name])
     monkeypatch.setattr(providers, "names", lambda: ["alpha", "beta"])
 
     router = Router("alpha")

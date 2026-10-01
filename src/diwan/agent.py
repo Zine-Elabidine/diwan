@@ -7,13 +7,11 @@ import traceback
 from collections.abc import Callable
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Literal
 
-from tarjuman import (BlockEnd, BlockStart, Cancel, Event, Finish, Message, Reasoning,
-                      ReasoningDelta, Replay, TarjumanError, Text, TextDelta, Tool, ToolCall,
-                      ToolCallDelta, ToolResult, Unknown, Usage)
-from tarjuman import errors
-from tarjuman import limits as tokens
+from tarjuman import (BlockEnd, BlockStart, Cancel, Event, Finish, Message, Provider, Reasoning,
+                      ReasoningDelta, Replay, TarjumanError, Text, TextDelta, ToolCall,
+                      ToolCallDelta, ToolResult, Unknown, Usage, errors, tokens)
 
 from . import context as ctx
 from .log import Log
@@ -29,13 +27,6 @@ OTHER_TOKENIZER = 0.85
 
 INTERRUPTED = ("The user interrupted the previous turn on purpose. If a tool call was cut off, "
                "it may have partly run: check before repeating it.")
-
-
-class Provider(Protocol):
-    provider: str
-
-    def stream(self, model: str, messages: list[Message], *, tools: list[Tool] | None = ...,
-               max_tokens: int | None = ..., cancel: Cancel | None = ...) -> Any: ...
 
 
 # --- what the loop tells the UI ---------------------------------------------------------------
@@ -176,10 +167,10 @@ class Agent:
             ratio = min(borrowed * OTHER_TOKENIZER, tokens.CHARS_PER_TOKEN) if borrowed \
                 else tokens.CHARS_PER_TOKEN
             used = tokens.estimate(request, tools, ratio)
-        window = _ask(provider, "context_window", model)
+        window = _ask(provider.context_window, model)
         if self.limits.context:
             window = min(window, self.limits.context) if window else self.limits.context
-        info = _ask(provider, "info", model)
+        info = _ask(provider.info, model)
         reserve = min(self.limits.max_tokens, info.max_output) if info and info.max_output \
             else self.limits.max_tokens
         if (provider, model) == (self.provider, self.model):
@@ -374,11 +365,10 @@ class Agent:
         return ended
 
 
-def _ask(provider: Any, method: str, model: str) -> Any:
+def _ask[T](lookup: Callable[[str], T | None], model: str) -> T | None:
     """Optional knowledge from the provider (window, catalog info); None if it has none."""
-    fn = getattr(provider, method, None)
     try:
-        return fn(model) if fn else None
+        return lookup(model)
     except Exception:  # a lookup must never break the session
         return None
 

@@ -2,7 +2,7 @@
 estimated in between and after a switch, and a switch that doesn't fit is refused."""
 
 import pytest
-from tarjuman import Message, TarjumanError, Text, Usage, limits
+from tarjuman import Message, TarjumanError, Text, Usage, tokens
 from tarjuman.fake import Fake
 
 from diwan.agent import Agent, Limits
@@ -38,19 +38,19 @@ def test_what_came_after_the_reply_is_estimated_at_the_calibrated_ratio(tmp_path
     a.turn("x" * 8_000)
     sent = [Message.system("sys"), Message.user("x" * 8_000)]
     tools = [s.tool for s in a.tools.values()]
-    r = limits.ratio(sent, tools, 4_000)                    # this model's chars per token
+    r = tokens.ratio(sent, tools, 4_000)                    # this model's chars per token
     late = Message.user("y" * 2_000)                        # arrives after the report
     a.log.add_message(late)
     ctx = a.context()
     assert not ctx.exact
-    assert ctx.used == 4_010 + limits.estimate([late], None, r)
-    assert r < limits.CHARS_PER_TOKEN                       # calibrated, not the default
+    assert ctx.used == 4_010 + tokens.estimate([late], None, r)
+    assert r < tokens.CHARS_PER_TOKEN                       # calibrated, not the default
 
 
 def test_another_model_lends_its_ratio_with_a_margin_never_its_count(tmp_path):
     sent = [Message.system("sys"), Message.user("w" * 9_000)]
     tools = [s.tool for s in make_tools(tmp_path).values()]
-    prompt = round(limits.chars(sent, tools) / 2.5)          # this model: 2.5 chars per token
+    prompt = round(tokens.chars(sent, tools) / 2.5)          # this model: 2.5 chars per token
     a = make(tmp_path, [reply("ok", prompt=prompt, output=10)])
     a.turn("w" * 9_000)
     other = Fake([], window=1_000_000)
@@ -58,8 +58,8 @@ def test_another_model_lends_its_ratio_with_a_margin_never_its_count(tmp_path):
     ctx = a.context(other, "big-model")
     assert not ctx.exact
     full = [Message.system("sys"), *a.log.messages()]
-    ratio = limits.ratio(sent, tools, prompt) * 0.85           # 15% more tokens, to be safe
-    assert ctx.used == limits.estimate(full, tools, ratio)
+    ratio = tokens.ratio(sent, tools, prompt) * 0.85           # 15% more tokens, to be safe
+    assert ctx.used == tokens.estimate(full, tools, ratio)
 
 
 def test_a_switch_that_doesnt_fit_is_refused_and_changes_nothing(tmp_path):

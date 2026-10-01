@@ -10,10 +10,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from tarjuman import catalog, providers
+from tarjuman import App, Provider, catalog, providers
 
-from .agent import Agent, Provider
+from .agent import Agent
 from .prompt import system_prompt
+
+# how providers that show the calling app (OpenRouter) name Diwan
+APP = App("Diwan", "https://github.com/Zine-Elabidine/diwan")
 
 
 @dataclass(frozen=True)
@@ -43,7 +46,7 @@ class Router:
         """Raises TarjumanError if the provider is unknown or its key is missing."""
         if name not in self._clients:
             url = self.base_url if name == self.default else None
-            self._clients[name] = providers.connect(name, base_url=url)
+            self._clients[name] = providers.connect(name, base_url=url, app=APP)
         return self._clients[name]
 
     def ref(self, text: str) -> Ref:
