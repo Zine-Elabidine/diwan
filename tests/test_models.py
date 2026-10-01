@@ -1,7 +1,6 @@
 import argparse
 
 import pytest
-
 from tarjuman import Message, Reasoning, Replay, TarjumanError, Text, providers
 from tarjuman.fake import Fake
 
@@ -106,5 +105,5 @@ def test_catalog_lines():
     assert line.startswith("anthropic:claude-sonnet-5-5 · ") and "context" in line and "$" in line
     assert "not in the catalog" in describe(Ref("local", "my-model"))
     found = listing("deepseek v4", "openrouter")
-    assert found and all(l.startswith("deepseek:") for l in found if not l.startswith("..."))
+    assert found and all(line.startswith("deepseek:") for line in found if not line.startswith("..."))
     assert "no catalog" in listing("local", "openrouter")[0]

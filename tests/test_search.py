@@ -72,7 +72,7 @@ def test_grep_errors_and_no_match(project):
 
 
 def test_in_a_git_repo_gitignore_decides(project):
-    if subprocess.run(["git", "--version"], capture_output=True).returncode:
+    if subprocess.run(["git", "--version"], capture_output=True, check=False).returncode:
         pytest.skip("no git")
     subprocess.run(["git", "init", "-q"], cwd=project, check=True)
     (project / ".gitignore").write_text("src/deep/\n")

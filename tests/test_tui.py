@@ -1,7 +1,6 @@
 import json
 
 import pytest
-
 from tarjuman import Message, Text, ToolCall, Usage
 from tarjuman.fake import Fake
 
@@ -75,7 +74,7 @@ async def test_denied_and_history_replay(tmp_path):
 
     # reopening the same session shows the earlier conversation
     log = Log.load(app.session_log.path)
-    again = DiwanApp(lambda l, r: Agent(Fake([]), "m", l, make_tools(tmp_path), "sys"), log, tmp_path,
+    again = DiwanApp(lambda lg, r: Agent(Fake([]), "m", lg, make_tools(tmp_path), "sys"), log, tmp_path,
                      Router("openrouter"), Ref("openrouter", "m"))
     async with again.run_test(size=(100, 30)) as pilot:
         await pilot.pause(0.2)

@@ -8,7 +8,6 @@ import sys
 from pathlib import Path
 
 from rich.text import Text
-
 from tarjuman import TarjumanError, providers
 
 from . import __version__
@@ -73,17 +72,20 @@ def start_ref(args: argparse.Namespace, log: Log | None, router: Router) -> Ref:
 
 def main(argv: list[str] | None = None) -> int:
     load_env_file()
-    ap = argparse.ArgumentParser(prog="diwan", description="A coding agent that keeps a record of everything.")
+    ap = argparse.ArgumentParser(prog="diwan",
+                                 description="A coding agent that keeps a record of everything.")
     ap.add_argument("-m", "--model", default=os.environ.get("DIWAN_MODEL"),
                     help="[provider:]model, e.g. anthropic:claude-sonnet-5-5")
     ap.add_argument("--provider", choices=providers.names(), default=os.environ.get("DIWAN_PROVIDER"),
                     help="the provider for model ids without a prefix (default: openrouter, "
                          "or local with --base-url)")
     ap.add_argument("-p", "--print", dest="prompt", help="run one task and exit")
-    ap.add_argument("-r", "--resume", nargs="?", const="last", help="resume the last session here, or a session file")
+    ap.add_argument("-r", "--resume", nargs="?", const="last",
+                    help="resume the last session here, or a session file")
     ap.add_argument("--base-url", default=os.environ.get("DIWAN_BASE_URL"),
-                    help="point the provider elsewhere: an OpenAI-compatible server (vLLM, llama.cpp, "
-                         "a gateway such as Bifrost), or an Anthropic-compatible one with --provider anthropic")
+                    help="point the provider elsewhere: an OpenAI-compatible server (vLLM, "
+                         "llama.cpp, a gateway such as Bifrost), or an Anthropic-compatible one "
+                         "with --provider anthropic")
     ap.add_argument("-y", "--yes", action="store_true", help="approve every tool call")
     ap.add_argument("--think", action="store_true", help="show the model's reasoning")
     ap.add_argument("--plain", action="store_true", help="simple line mode instead of the full-screen app")

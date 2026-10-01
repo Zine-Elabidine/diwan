@@ -44,7 +44,7 @@ def find_shell() -> tuple[list[str], str]:
     git = shutil.which("git")
     if git:  # ...\Git\cmd\git.exe -> ...\Git\bin\bash.exe
         candidates.append(Path(git).resolve().parent.parent / "bin" / "bash.exe")
-    for base in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)"),
+    for base in (os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)"),
                  os.environ.get("LOCALAPPDATA") and str(Path(os.environ["LOCALAPPDATA"]) / "Programs")):
         if base:
             candidates.append(Path(base) / "Git" / "bin" / "bash.exe")
@@ -61,7 +61,8 @@ def _kill_tree(p: subprocess.Popen[str]) -> None:
     Windows: taskkill /T /F on the tree."""
     if os.name == "nt":
         if p.poll() is None:
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True)
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(p.pid)], capture_output=True,
+                           check=False)
         return
     try:
         os.killpg(p.pid, signal.SIGTERM)
@@ -83,8 +84,11 @@ def _drain(p: subprocess.Popen[str]) -> tuple[str, str]:
     try:
         return p.communicate(timeout=2)
     except subprocess.TimeoutExpired as e:
-        text = lambda b: b.decode("utf-8", "replace") if isinstance(b, bytes) else (b or "")
-        return text(e.stdout), text(e.stderr)
+        return _decode(e.stdout), _decode(e.stderr)
+
+
+def _decode(b: bytes | str | None) -> str:
+    return b.decode("utf-8", "replace") if isinstance(b, bytes) else (b or "")
 
 
 # heavy folders skipped when the project isn't a git repo (in a repo, .gitignore decides)
@@ -103,7 +107,7 @@ def _files(root: Path) -> list[Path]:
         return [root]
     try:
         r = subprocess.run(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-                           cwd=root, capture_output=True, timeout=30)
+                           cwd=root, capture_output=True, timeout=30, check=False)
         if r.returncode == 0:
             paths = [root / p for p in r.stdout.decode("utf-8", "replace").split("\0") if p]
             return [p for p in paths if p.is_file()]  # tracked files may be deleted

@@ -1,12 +1,11 @@
 import json
 
 import pytest
-
-from tarjuman import (Finish, Message, Reasoning, Replay, TarjumanError, Text, TextDelta,
-                      ToolCall, ToolResult, Usage)
+from tarjuman import (Finish, Message, Reasoning, Replay, TarjumanError, Text, TextDelta, ToolCall,
+                      Usage)
 from tarjuman.fake import Fake
 
-from diwan.agent import INTERRUPTED, Agent, Limits, ToolFinished, TurnEnded
+from diwan.agent import INTERRUPTED, Agent, Limits, ToolFinished
 from diwan.log import Log
 from diwan.tools import make_tools
 
@@ -40,7 +39,7 @@ def test_plain_answer_ends_the_turn(tmp_path):
 
 
 def test_tool_loop_writes_and_reads_a_file(tmp_path):
-    a, log, events = agent(tmp_path, [
+    a, _log, events = agent(tmp_path, [
         call("write", path="notes/a.txt", content="one\ntwo"),
         call("read", cid="c2", path="notes/a.txt"),
         say("done"),
@@ -60,7 +59,7 @@ def test_denied_action_is_reported_to_the_model(tmp_path):
     a, log, _ = agent(tmp_path, [call("bash", command="rm -rf x"), say("ok, asking")],
                       approve=lambda c, s: False)
     a.turn("clean up")
-    tool_msg = [m for m in log.messages() if m.role == "tool"][0]
+    tool_msg = next(m for m in log.messages() if m.role == "tool")
     assert tool_msg.content[0].is_error and "denied" in tool_msg.content[0].text
     assert any(e.type == "approval" and e.data["allowed"] is False for e in log.events)
 
@@ -90,7 +89,7 @@ def test_bad_tool_input_goes_back_as_an_error(tmp_path):
 
 
 def test_retries_then_succeeds_and_hides_failures_from_the_model(tmp_path):
-    a, log, events = agent(tmp_path, [TarjumanError("RATE_LIMIT", "slow"), say("hi")])
+    a, log, _events = agent(tmp_path, [TarjumanError("RATE_LIMIT", "slow"), say("hi")])
     ended = a.turn("x")
     assert ended.reason == "done"
     assert [m.role for m in log.messages()] == ["user", "assistant"]
@@ -163,13 +162,15 @@ def test_bash_reports_exit_code_and_stderr(tmp_path):
 
 def test_ui_renders_markdown_tools_and_small_costs(tmp_path):
     from rich.console import Console
+
     from diwan.ui import Terminal, fmt_cost
 
     assert fmt_cost(0.0000694) == "$0.000069" and fmt_cost(0) == "$0" and fmt_cost(0.25) == "$0.2500"
     console = Console(record=True, width=80, force_terminal=False)
     term = Terminal(console, auto_approve=True)
     a = Agent(Fake([Message("assistant", [Text("thinking"), ToolCall("c1", "bash", '{"command":"echo hi"}')]),
-                    Message("assistant", [Text("My name is **Diwan**.")], usage=Usage(900, 0, 0, 70, 0, 0.0000694))]),
+                    Message("assistant", [Text("My name is **Diwan**.")],
+                            usage=Usage(900, 0, 0, 70, 0, 0.0000694))]),
               "m", Log.new(cwd=str(tmp_path)), make_tools(tmp_path), "sys",
               approve=term.approve, on=term.on)
     a.turn("hi")

@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import Future
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, ClassVar
 
 from rich.text import Text as RText
+from tarjuman import (BlockEnd, BlockStart, Finish, ReasoningDelta, TarjumanError, TextDelta,
+                      ToolCall, ToolResult, Usage)
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -17,9 +20,6 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message as TMessage
 from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Markdown, Static, TextArea, Tree
-
-from tarjuman import (BlockEnd, BlockStart, Finish, Message, ReasoningDelta, TarjumanError,
-                      TextDelta, ToolCall, ToolResult, Usage)
 
 from . import __version__
 from .agent import (Agent, ContextCleared, Retrying, StateChanged, ToolFinished, ToolStarted,
@@ -102,12 +102,12 @@ class ToolView(Vertical):
     def finish(self, result: ToolResult) -> None:
         self.header.update(self._title("✗" if result.is_error else "✓",
                                        "red" if result.is_error else "green"))
-        lines = [short(l) for l in (result.text.splitlines() or [""])]
+        lines = [short(line) for line in (result.text.splitlines() or [""])]
         style = "red" if result.is_error else "dim"
-        head = RText("\n".join(l[:300] for l in lines[:PREVIEW_LINES]), style=style)
+        head = RText("\n".join(line[:300] for line in lines[:PREVIEW_LINES]), style=style)
         self.mount(Static(head, classes="tool-out"))
         if len(lines) > PREVIEW_LINES:
-            rest = Static(RText("\n".join(l[:300] for l in lines[PREVIEW_LINES:]), style=style),
+            rest = Static(RText("\n".join(line[:300] for line in lines[PREVIEW_LINES:]), style=style),
                           classes="tool-out")
             self.mount(Collapsible(rest, title=f"{len(lines) - PREVIEW_LINES} more lines",
                                    collapsed=True, classes="more"))
@@ -136,7 +136,7 @@ def diff_text(call: ToolCall) -> RText:
 
 
 class Approval(ModalScreen[str]):
-    BINDINGS = [Binding("y", "answer('yes')", "Yes"), Binding("a", "answer('always')", "Always"),
+    BINDINGS: ClassVar = [Binding("y", "answer('yes')", "Yes"), Binding("a", "answer('always')", "Always"),
                 Binding("n", "answer('no')", "No"), Binding("escape", "answer('no')", "No")]
 
     def __init__(self, call: ToolCall):
@@ -190,7 +190,7 @@ class DiwanApp(App):
     #buttons { height: auto; align-horizontal: right; }
     #buttons Button { margin: 0 0 0 1; }
     """
-    BINDINGS = [
+    BINDINGS: ClassVar = [
         Binding("escape", "interrupt", "Stop", priority=True),
         Binding("ctrl+c", "interrupt_or_hint", "Stop", priority=True, show=False),
         Binding("ctrl+t", "toggle_think", "Reasoning"),

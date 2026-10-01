@@ -7,15 +7,13 @@ import threading
 import time
 
 import pytest
-
 from tarjuman import Cancel, Message, TarjumanError
 from tarjuman.fake import Fake
+from test_agent import call, home, say  # noqa: F401  (the fixture isolates DIWAN_HOME)
 
 from diwan.agent import INTERRUPTED, Agent, Retrying, ToolStarted
 from diwan.log import Log
 from diwan.tools import ToolError, make_tools
-
-from test_agent import call, home, say  # noqa: F401  (the fixture isolates DIWAN_HOME)
 
 posix = pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
 

@@ -33,17 +33,18 @@ def apply(messages: list[Message], masked: dict[str, str]) -> list[Message]:
     """The messages as the model sees them: masked outputs and arguments replaced."""
     if not masked:
         return messages
-    out = []
-    for m in messages:
-        if m.role == "tool" and any(f"out:{b.call_id}" in masked for b in m.content):
-            m = _copy(m, [ToolResult(b.call_id, masked[f"out:{b.call_id}"], b.is_error, b.name)
-                          if f"out:{b.call_id}" in masked else b for b in m.content])
-        elif m.role == "assistant" and any(f"args:{c.id}" in masked for c in m.tool_calls):
-            m = _copy(m, [ToolCall(b.id, b.name, masked[f"args:{b.id}"])
-                          if isinstance(b, ToolCall) and f"args:{b.id}" in masked else b
-                          for b in m.content])
-        out.append(m)
-    return out
+    return [_masked(m, masked) for m in messages]
+
+
+def _masked(m: Message, masked: dict[str, str]) -> Message:
+    if m.role == "tool" and any(f"out:{b.call_id}" in masked for b in m.content):
+        return _copy(m, [ToolResult(b.call_id, masked[f"out:{b.call_id}"], b.is_error, b.name)
+                         if f"out:{b.call_id}" in masked else b for b in m.content])
+    if m.role == "assistant" and any(f"args:{c.id}" in masked for c in m.tool_calls):
+        return _copy(m, [ToolCall(b.id, b.name, masked[f"args:{b.id}"])
+                         if isinstance(b, ToolCall) and f"args:{b.id}" in masked else b
+                         for b in m.content])
+    return m
 
 
 def plan(messages: list[Message], masked: dict[str, str], usable: int,
@@ -53,7 +54,9 @@ def plan(messages: list[Message], masked: dict[str, str], usable: int,
     calls = {c.id: c for m in messages if m.role == "assistant" for c in m.tool_calls}
     last_step = _last_step_ids(messages)
     keep = min(int(usable * KEEP_RECENT), KEEP_RECENT_MAX)
-    tok = lambda text: round(len(text) / chars_per_token)
+
+    def tok(text: str) -> int:
+        return round(len(text) / chars_per_token)
 
     entries: dict[str, str] = {}
     saved = cleared = kept = 0

@@ -5,13 +5,12 @@ import json
 
 from tarjuman import Message, Text, ToolCall, ToolResult, Usage
 from tarjuman.fake import Fake
+from test_agent import home  # noqa: F401  (the fixture isolates DIWAN_HOME)
 
 from diwan import context as ctx
 from diwan.agent import Agent, ContextCleared, Limits
 from diwan.log import Log
 from diwan.tools import make_tools
-
-from test_agent import home  # noqa: F401  (the fixture isolates DIWAN_HOME)
 
 
 def history(n, size=4_000):
@@ -19,7 +18,7 @@ def history(n, size=4_000):
     msgs = [Message.user("look at the files")]
     for i in range(n):
         msgs.append(Message("assistant", [ToolCall(f"c{i}", "read", json.dumps({"path": f"f{i}.py"}))]))
-        msgs.append(Message("tool", [ToolResult(f"c{i}", f"line\n" * (size // 5))]))
+        msgs.append(Message("tool", [ToolResult(f"c{i}", "line\n" * (size // 5))]))
     return msgs
 
 
@@ -46,7 +45,8 @@ def test_already_cleared_outputs_are_not_cleared_again():
 
 def test_big_write_contents_are_cleared_but_stay_valid_json():
     msgs = [Message.user("write it"),
-            Message("assistant", [ToolCall("w", "write", json.dumps({"path": "a.py", "content": "x" * 50_000}))]),
+            Message("assistant", [ToolCall("w", "write",
+                                           json.dumps({"path": "a.py", "content": "x" * 50_000}))]),
             Message("tool", [ToolResult("w", "Wrote a.py")]),
             *history(6)[1:]]
     p = ctx.plan(msgs, {}, usable=10_000, chars_per_token=4)
