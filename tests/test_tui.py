@@ -47,7 +47,7 @@ async def test_chat_tool_approval_and_footer(tmp_path):
         assert len(app.query(UserMsg)) == 1
         view = app.query_one(ToolView)
         assert "hello-from-bash" in str(view.query_one(".tool-out").render())
-        assert app.session.cost == pytest.approx(0.00007)
+        assert app.agent.total.cost == pytest.approx(0.00007)
         app.save_screenshot(str(tmp_path / "shot.svg"))
 
 

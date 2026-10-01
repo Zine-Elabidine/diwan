@@ -152,11 +152,12 @@ def test_ui_renders_markdown_tools_and_small_costs(tmp_path):
     from rich.console import Console
 
     from diwan.present import fmt_cost
+    from diwan.session import Approvals
     from diwan.ui import Terminal
 
     assert fmt_cost(0.0000694) == "$0.000069" and fmt_cost(0) == "$0" and fmt_cost(0.25) == "$0.2500"
     console = Console(record=True, width=80, force_terminal=False)
-    term = Terminal(console, auto_approve=True)
+    term = Terminal(console, approvals=Approvals(auto=True))
     a = Agent(Fake([Message("assistant", [Text("thinking"), ToolCall("c1", "bash", '{"command":"echo hi"}')]),
                     Message("assistant", [Text("My name is **Diwan**.")],
                             usage=Usage(900, 0, 0, 70, 0, 0.0000694))]),

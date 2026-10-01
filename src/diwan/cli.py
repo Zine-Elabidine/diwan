@@ -8,29 +8,23 @@ import sys
 from pathlib import Path
 
 from rich.text import Text
-from tarjuman import TarjumanError, errors, providers
+from tarjuman import TarjumanError, Usage, errors, providers
 
-from . import __version__
+from . import __version__, commands
 from .agent import Agent, Limits
 from .log import Log
-from .models import Ref, Router, describe, listing, switch
+from .models import Ref, Router
 from .paths import PathPolicy
 from .prompt import system_prompt
+from .session import Approvals, Session
 from .tools import make_tools
-from .present import fmt_usage
 from .ui import Terminal
 
 # the model used when none is given, per provider ("local" has none: say which with -m)
 DEFAULT_MODELS = {"openrouter": "deepseek/deepseek-v4-flash", "anthropic": "claude-sonnet-5-5",
                   "deepseek": "deepseek-v4-flash", "openai": "gpt-5"}
 
-HELP = """[bold]/model[/bold] [provider:]<id>   switch model, even across providers, mid-conversation
-                       (anthropic:claude-sonnet-5-5, openrouter:z-ai/glm-5.3-flash, deepseek:...)
-[bold]/models[/bold] [provider] [text]  models in the catalog, cheapest first
-[bold]/think[/bold]        show or hide the model's reasoning
-[bold]/cost[/bold]         tokens and cost for this session
-[bold]/new[/bold]          start a new session
-[bold]/exit[/bold]         quit (or Ctrl-D).  Ctrl-C stops the agent mid-turn."""
+KEYS = "Ctrl-D quits. Ctrl-C stops the agent mid-turn."
 
 # readline miscounts the prompt width unless color codes are wrapped in \001..\002
 PROMPT = "\001\033[1;36m\002› \001\033[0m\002"
@@ -110,20 +104,22 @@ def main(argv: list[str] | None = None) -> int:
         log = Log.load(Path(args.resume).expanduser())
 
     router = Router(args.provider or ("local" if args.base_url else "openrouter"), args.base_url)
-    term = Terminal(auto_approve=args.yes, interactive=args.prompt is None,
+    approvals = Approvals(auto=args.yes)
+    term = Terminal(approvals=approvals, interactive=args.prompt is None,
                     show_reasoning=args.think)
     c = term.console
     try:
         ref = start_ref(args, log, router)
         if log is None:
             log = Log.new(cwd=str(cwd), provider=ref.provider, model=ref.model, diwan=__version__)
-        agent = build_agent(ref, log, term, cwd, router, limits)
+        session = Session(lambda lg, at: build_agent(at, lg, term, cwd, router, limits), log, ref,
+                          router, cwd, approvals)
     except TarjumanError as e:
         c.print(Text(str(e), style="red"))
         return 1
 
     if args.prompt:
-        ended = agent.turn(args.prompt)
+        ended = session.agent.turn(args.prompt)
         return 0 if ended.reason == "done" else 1
 
     if not args.plain and sys.stdin.isatty() and sys.stdout.isatty():
@@ -132,7 +128,8 @@ def main(argv: list[str] | None = None) -> int:
         def make_agent(new_log: Log, at: Ref) -> Agent:
             return build_agent(at, new_log, term, cwd, router, limits)
 
-        DiwanApp(make_agent, log, cwd, router, ref, show_reasoning=args.think).run()
+        DiwanApp(make_agent, log, cwd, router, ref, approvals=approvals,
+                 show_reasoning=args.think).run()
         return 0
 
     try:
@@ -153,36 +150,21 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if not text.startswith("/"):
             c.print()
-            agent.turn(text)
+            session.agent.turn(text)
             continue
-        cmd, _, rest = text.partition(" ")
-        rest = rest.strip()
-        if cmd in ("/exit", "/quit"):
+        reply = commands.run(session, text)
+        if reply.effect == "exit":
             return 0
-        elif cmd == "/help":
-            c.print(HELP)
-        elif cmd == "/model":
-            try:
-                if rest:
-                    ref = switch(agent, router, rest)
-                c.print(Text(describe(ref), style="dim"))
-            except TarjumanError as e:
-                c.print(Text(str(e), style="red"))
-        elif cmd == "/models":
-            c.print(Text("\n".join(listing(rest, ref.provider)), style="dim"))
-        elif cmd == "/think":
+        if reply.effect == "new":
+            term.session = Usage()   # the footer's session total starts again, like /cost
+        if reply.effect == "think":
             term.show_reasoning = not term.show_reasoning
-            c.print(f"[dim]reasoning {'shown' if term.show_reasoning else 'hidden'}[/dim]")
-        elif cmd == "/cost":
-            c.print(f"[dim]{fmt_usage(agent.total)}[/dim]")
-        elif cmd == "/new":
-            log = Log.new(cwd=str(cwd), provider=ref.provider, model=ref.model, diwan=__version__)
-            agent = build_agent(ref, log, term, cwd, router, limits)
-            c.print(f"[dim]new session {log.id}[/dim]")
-        else:
-            c.print(f"[dim]unknown command {cmd}; /help[/dim]")
+            reply.text = f"reasoning {'shown' if term.show_reasoning else 'hidden'}"
+        if reply.text:
+            c.print(Text(reply.text, style="red" if reply.kind == "error" else "dim"))
+        if text.split()[0] == "/help":
+            c.print(Text(KEYS, style="dim"))
         c.print()
-
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -16,19 +16,19 @@ from .context import ContextUse
 from .events import (ContextChanged, ContextCleared, Retrying, StateChanged, ToolFinished,
                      ToolStarted, TurnEnded, UIEvent)
 from .present import fmt_context, fmt_cost, fmt_usage, short, summarize_call
+from .session import Approvals
 from .tools import Spec
 
 TOOL_LINES = 4
 
 
 class Terminal:
-    def __init__(self, console: Console | None = None, *, auto_approve: bool = False,
+    def __init__(self, console: Console | None = None, *, approvals: Approvals | None = None,
                  interactive: bool = True, show_reasoning: bool = False):
         self.console = console or Console(highlight=False)
-        self.auto = auto_approve
+        self.approvals = approvals or Approvals()
         self.interactive = interactive
         self.show_reasoning = show_reasoning
-        self.always: set[str] = set()
         self.session = Usage()
         self.context: ContextUse | None = None  # set by the agent's ContextChanged events
         self._live: Live | None = None
@@ -147,7 +147,7 @@ class Terminal:
             self.console.print(Text("    outside the project", style="yellow"))
         if call.name in ("write", "edit"):
             self._preview(call)
-        if self.auto or (call.name in self.always and not outside):
+        if self.approvals.covers(call, outside):
             return True
         if not self.interactive:
             return False
@@ -158,13 +158,9 @@ class Terminal:
                     f"  [dim]allow?[/dim] [bold]y[/bold]es / [bold]n[/bold]o{always} › ").strip().lower()
             except EOFError:
                 return False
-            if answer in ("y", "yes", ""):
-                return True
-            if answer in ("n", "no"):
-                return False
-            if answer in ("a", "always") and not outside:
-                self.always.add(call.name)
-                return True
+            full = {"y": "yes", "": "yes", "n": "no", "a": "always"}.get(answer, answer)
+            if full in ("yes", "no") or (full == "always" and not outside):
+                return self.approvals.answer(call, full, outside)
 
     def _preview(self, call: ToolCall) -> None:
         try:

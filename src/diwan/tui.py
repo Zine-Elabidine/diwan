@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from rich.text import Text as RText
-from tarjuman import (BlockEnd, BlockStart, Finish, ReasoningDelta, TarjumanError, TextDelta,
-                      ToolCall, ToolResult, Usage)
+from tarjuman import (BlockEnd, BlockStart, Finish, ReasoningDelta, TextDelta,
+                      ToolCall, ToolResult)
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -21,29 +21,20 @@ from textual.message import Message as TMessage
 from textual.screen import ModalScreen
 from textual.widgets import Button, Collapsible, Markdown, Static, TextArea, Tree
 
-from . import __version__
+from . import __version__, commands
 from .agent import Agent
 from .events import (ContextCleared, Retrying, StateChanged, ToolFinished, ToolStarted, TurnEnded,
                      UIEvent)
 from .log import Log
-from .models import Ref, Router, describe, listing, switch
-from .tools import Spec
+from .models import Ref, Router
 from .present import fmt_context, fmt_cost, fmt_tokens, fmt_usage, short, summarize_call
+from .session import Approvals, Session
+from .tools import Spec
 
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 PREVIEW_LINES = 8
 
-HELP = """**Commands**
-
-- `/model [provider:]<id>` switch model mid-conversation, even across providers
-  (`anthropic:claude-sonnet-5-5`, `openrouter:z-ai/glm-5.3-flash`)
-- `/models [provider] [text]` models in the catalog, cheapest first
-- `/think` show or hide reasoning (also Ctrl+T)
-- `/cost` tokens and cost for this session
-- `/new` start a new session
-- `/exit` quit (also Ctrl+Q)
-
-**Keys:** Enter sends · Ctrl+J new line · Esc stops the agent · Ctrl+B agents panel"""
+KEYS = "Enter sends · Ctrl+J new line · Esc stops the agent · Ctrl+T reasoning · Ctrl+B agents · Ctrl+Q quits"
 
 
 # --- widgets ------------------------------------------------------------------------------------
@@ -202,25 +193,39 @@ class DiwanApp(App):
     ]
 
     def __init__(self, make_agent: Callable[[Log, Ref], Agent], log: Log, cwd: Path,
-                 router: Router, ref: Ref, *, show_reasoning: bool = False,
-                 first_prompt: str | None = None):
+                 router: Router, ref: Ref, *, approvals: Approvals | None = None,
+                 show_reasoning: bool = False, first_prompt: str | None = None):
         super().__init__()
-        self.make_agent, self.session_log, self.cwd = make_agent, log, cwd
-        self.router, self.ref = router, ref
+        self.cwd = cwd
         self.show_reasoning = show_reasoning
         self.first_prompt = first_prompt
-        self.agent = make_agent(log, ref)
-        self.agent.approve = self._approve_from_thread
-        self.agent.on = self._from_agent
+
+        def wired(lg: Log, at: Ref) -> Agent:   # every agent, the first and after /new
+            agent = make_agent(lg, at)
+            agent.approve = self._approve_from_thread
+            agent.on = self._from_agent
+            return agent
+
+        self.session = Session(wired, log, ref, router, cwd, approvals)
         self.running = False
         self.state = "idle"
-        self.session = Usage()
         self._frame = 0
         self._state_since = time.monotonic()
         self._cur: dict[str, Any] | None = None
         self._tools: dict[str, ToolView] = {}
-        self.always: set[str] = set()
         self._pending: set[Future[str]] = set()   # approvals the agent thread is waiting on
+
+    @property
+    def agent(self) -> Agent:
+        return self.session.agent
+
+    @property
+    def session_log(self) -> Log:
+        return self.session.log
+
+    @property
+    def ref(self) -> Ref:
+        return self.session.ref
 
     # --- layout -----------------------------------------------------------------------------
 
@@ -275,9 +280,10 @@ class DiwanApp(App):
             t.append("● waiting for your approval", style="yellow")
         else:
             t.append("● ready", style="green")
-        cost = fmt_cost(self.session.cost) if self.session.cost is not None else "–"
-        total_in = self.session.input + self.session.cache_read + self.session.cache_write
-        t.append(f"   {fmt_tokens(total_in)} in · {fmt_tokens(self.session.output)} out · {cost}",
+        spent = self.agent.total
+        cost = fmt_cost(spent.cost) if spent.cost is not None else "–"
+        total_in = spent.input + spent.cache_read + spent.cache_write
+        t.append(f"   {fmt_tokens(total_in)} in · {fmt_tokens(spent.output)} out · {cost}",
                  style="dim")
         ctx, style = fmt_context(self.agent.context_use)
         t.append(f"   {ctx}", style=style)
@@ -331,44 +337,22 @@ class DiwanApp(App):
         self.run_turn(text)
 
     def command(self, text: str) -> None:
-        cmd, _, rest = text.partition(" ")
-        rest = rest.strip()
-        if cmd in ("/exit", "/quit"):
+        reply = commands.run(self.session, text, busy=self.running)
+        if reply.effect == "exit":
             self.exit()
-        elif cmd == "/help":
-            self.chat.mount(Markdown(HELP))
-        elif cmd == "/model":
-            if rest and self.running:
-                self.notify("Stop the agent first (Esc).", severity="warning")
-                return
-            try:
-                if rest:
-                    self.ref = switch(self.agent, self.router, rest)
-                    self._update_top()
-                    self._update_agents()
-                self.notify(describe(self.ref))
-            except TarjumanError as e:
-                self.notify(str(e), severity="error")
-        elif cmd == "/models":
-            self.chat.mount(Static("\n".join(listing(rest, self.ref.provider)), classes="tool-out"))
-        elif cmd == "/think":
+            return
+        if reply.effect == "think":
             self.action_toggle_think()
-        elif cmd == "/cost":
-            self.notify(fmt_usage(self.session) or "nothing spent yet")
-        elif cmd == "/new":
-            if self.running:
-                self.notify("Stop the agent first (Esc).", severity="warning")
-                return
-            self.session_log = Log.new(cwd=str(self.cwd), provider=self.ref.provider,
-                                       model=self.ref.model, diwan=__version__)
-            self.agent = self.make_agent(self.session_log, self.ref)
-            self.agent.approve = self._approve_from_thread
-            self.agent.on = self._from_agent
+        elif reply.effect == "new":
             self.chat.remove_children()
+        if reply.effect in ("new", "model"):
             self._update_top()
-            self.notify(f"new session {self.session_log.id}")
-        else:
-            self.notify(f"unknown command {cmd} (/help)", severity="warning")
+            self._update_agents()
+        if reply.kind == "block":
+            extra = f"\n\n{KEYS}" if text.split(maxsplit=1)[0] == "/help" else ""
+            self.chat.mount(Static(RText(reply.text + extra), classes="tool-out"))  # no markup
+        elif reply.text:
+            self.notify(reply.text, severity="error" if reply.kind == "error" else "information")
         self.chat.scroll_end(animate=False)
 
     @work(thread=True, exclusive=True)
@@ -386,7 +370,7 @@ class DiwanApp(App):
 
     def _approve_from_thread(self, call: ToolCall, spec: Spec, outside: bool = False) -> bool:
         """Called on the agent thread: show the dialog on the app thread and wait for it."""
-        if call.name in self.always and not outside:   # "always" covers the project only
+        if self.session.approvals.covers(call, outside):
             return True
         answer: Future[str] = Future()
         self._pending.add(answer)
@@ -395,9 +379,7 @@ class DiwanApp(App):
             result = self._wait(answer)
         finally:
             self._pending.discard(answer)
-        if result == "always" and not outside:
-            self.always.add(call.name)
-        return result in ("yes", "always")
+        return self.session.approvals.answer(call, result, outside)
 
     def _ask(self, call: ToolCall, outside: bool, answer: Future[str]) -> None:
         self.push_screen(Approval(call, outside), callback=lambda r: _settle(answer, r or "no"))
@@ -473,7 +455,6 @@ class DiwanApp(App):
                                    f"(attempt {ev.attempt})", classes="notice"))
         elif isinstance(ev, TurnEnded):
             await self._close_block()
-            self.session += ev.usage
             mark = {"done": ("✓", "green"), "interrupted": ("■ interrupted", "yellow")}.get(
                 ev.reason, (f"■ stopped: {ev.reason}", "red"))
             t = RText.assemble(mark, (f"  {ev.steps} step{'s' if ev.steps != 1 else ''} · "
