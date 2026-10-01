@@ -5,7 +5,6 @@ import json
 
 from tarjuman import Message, Text, ToolCall, ToolResult, Usage
 from tarjuman.fake import Fake
-from test_agent import home  # noqa: F401  (the fixture isolates DIWAN_HOME)
 
 from diwan import context as ctx
 from diwan.agent import Agent, ContextCleared, Limits

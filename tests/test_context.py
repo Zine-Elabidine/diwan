@@ -4,7 +4,6 @@ estimated in between and after a switch, and a switch that doesn't fit is refuse
 import pytest
 from tarjuman import Message, TarjumanError, Text, Usage, limits
 from tarjuman.fake import Fake
-from test_agent import call, home  # noqa: F401  (the fixture isolates DIWAN_HOME)
 
 from diwan.agent import Agent, Limits
 from diwan.log import Log

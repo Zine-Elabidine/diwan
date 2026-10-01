@@ -11,11 +11,6 @@ from diwan.models import Ref, Router, describe, listing, parse, switch
 from diwan.tools import make_tools
 
 
-@pytest.fixture(autouse=True)
-def home(tmp_path, monkeypatch):
-    monkeypatch.setenv("DIWAN_HOME", str(tmp_path / "home"))
-
-
 def fake(name, *script):
     f = Fake(list(script))
     f.provider = name

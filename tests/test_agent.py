@@ -1,4 +1,3 @@
-import json
 
 import pytest
 from tarjuman import (Finish, Message, Reasoning, Replay, TarjumanError, Text, TextDelta, ToolCall,
@@ -8,19 +7,7 @@ from tarjuman.fake import Fake
 from diwan.agent import INTERRUPTED, Agent, Limits, ToolFinished
 from diwan.log import Log
 from diwan.tools import make_tools
-
-
-@pytest.fixture(autouse=True)
-def home(tmp_path, monkeypatch):
-    monkeypatch.setenv("DIWAN_HOME", str(tmp_path / "home"))
-
-
-def say(text, **kw):
-    return Message("assistant", [Text(text)], **kw)
-
-
-def call(name, cid="c1", **args):
-    return Message("assistant", [ToolCall(cid, name, json.dumps(args))])
+from helpers import call, say
 
 
 def agent(tmp_path, script, approve=lambda c, s: True, **kw):

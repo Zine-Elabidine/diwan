@@ -11,11 +11,6 @@ from diwan.tools import make_tools
 from diwan.tui import Approval, DiwanApp, ToolView, UserMsg
 
 
-@pytest.fixture(autouse=True)
-def home(tmp_path, monkeypatch):
-    monkeypatch.setenv("DIWAN_HOME", str(tmp_path / "home"))
-
-
 def make_app(tmp_path, script):
     def make_agent(log, ref):
         return Agent(Fake(script), ref.model, log, make_tools(tmp_path), "sys")
