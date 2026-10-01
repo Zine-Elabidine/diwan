@@ -238,7 +238,7 @@ finding says otherwise.
 - **Phase 2 done** (2026-10-01):
   - 5: `tarjuman.Provider` and `HTTPProvider` (Tarjuman 4b1203e);
   - 13: `connect(app=App(...))`;
-  - 8: the branch state is cached by head (0.02 ms per step instead of 9.2 at 2,000 messages), and event kinds are a `Kind` enum;
+  - 8: messages and masks are cached by head (0.02 ms per step instead of 9.2 at 2,000 messages), and event kinds are a `Kind` enum; `current_model()` stays a walk, since it runs once, at startup;
   - 10: `Interrupted`;
   - 9: the prompt builder; the `/model` fit check now measures the new model's own prompt;
   - 4: `events.py`, `ContextManager` in `context.py`, `clearing.py`;
