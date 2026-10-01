@@ -9,7 +9,7 @@ location, a fix and an effort (S < half a day, M ≈ 1 day).
 
 | | Diwan | Tarjuman |
 |---|---|---|
-| Source lines | 1,880 | 1,600 |
+| Source lines | 1,990 | 1,785 |
 | Tests | 50 passing | 77 passing |
 | Coverage | 79% (`cli.py` 24%, `tui.py` 74%) | 90% (`fake.py` 0%: only Diwan exercises it) |
 | ruff (E, F, B, UP, SIM, PL…) | 31 findings | 12 findings |
@@ -17,7 +17,8 @@ location, a fix and an effort (S < half a day, M ≈ 1 day).
 | Lint/type config, CI | none | none |
 
 Most pyright errors come from one design choice (finding 14) and from union types that
-are never narrowed. The ruff findings include real leftovers: unused imports, a dead
+are never narrowed; the ones checked are false alarms, but at this volume a real error would
+go unnoticed. The ruff findings include real leftovers: unused imports, a dead
 variable in `grep`, and lambdas assigned to names.
 
 **What's sound and should stay:** the neutral message format and its transform, the
@@ -37,6 +38,11 @@ target is outside the project.
 **Fix:** a path policy in a shared tool context. Inside the project is free. Outside asks
 for approval. A deny list (`~/.diwan/env`, `~/.ssh`, `.env*`) is always refused. **S**
 
+This closes the tools that run without approval. It is **not containment**: `bash` can still
+`cat ~/.diwan/env`, and only its approval stands in the way, which `-y` or "always bash"
+removes. Real containment needs a sandbox for commands (namespaces, or a container), a later
+item.
+
 ### 2. Any unexpected error closes the app (high)
 `agent.py:198` catches only `KeyboardInterrupt` and `TarjumanError`. In the TUI, the turn
 runs in a Textual worker with the default `exit_on_error=True` (`tui.py:370`), so a bug in
@@ -48,10 +54,17 @@ the turn with reason `"error"`. The UI shows it. The session survives. **S**
 ### 3. `context()` is quadratic after a model switch (medium)
 `agent.py:149-157`: with no report from the current model, the loop computes
 `tokens.ratio(request[:i])` for **every** older reply, although only the most recent one is
-used (`borrowed = borrowed or ratio`). Measured: 5 ms at 100 replies, 206 ms at 800, about
-0.8 s at 1,600, and it runs ~3 times per step.
+used (`borrowed = borrowed or ratio`). Measured: 5 ms at 100 replies, 60 ms at 400,
+206 ms at 800 (so about 0.8 s at 1,600, extrapolated), and it runs ~3 times per step.
 **Fix:** compute the ratio only while `borrowed` is still unset, and compute the view once
 per step (see 8). **S**
+
+### 3b. Quitting during an approval leaves the process hanging (medium)
+`tui.py:389`: the agent thread waits on `answer.result()` with no timeout. Reproduced: a
+`write` that needs approval, then Ctrl+Q while the dialog is open. The app closes, but the
+process never exits, because the worker thread is still waiting.
+**Fix:** when the app closes, answer every pending approval with "no" and interrupt the
+agent; the wait also watches the turn's Cancel. **S**
 
 ---
 
@@ -115,10 +128,11 @@ would add another.
 `readonly`, `run(args, ctx)`) and a `ToolContext` (cwd, cancel, path policy, limits)
 passed to every tool, plus a registry. The path policy of finding 1 lives there. **M**
 
-### 8. The log is stringly typed and re-parsed constantly
+### 8. The log is stringly typed and rebuilt on every read
 Event types are bare strings (`"message"`, `"mask"`, `"model_switch"`…). `messages()`,
 `masked()`, `mask_points()` and `current_model()` (`log.py:92-114`) each walk the branch
-and re-parse JSON, several times per step. It's linear today (17 ms per step at 1,600
+again, and `messages()` rebuilds every `Message` object from its dict, several times per
+step. It's linear today (17 ms per step at 1,600
 steps), but every new event kind adds another walk.
 **Fix:** event kinds as constants, and the branch state (messages, masks, current model)
 kept up to date on `append` instead of rebuilt on every read. **S-M**
@@ -156,8 +170,9 @@ both.
 ### 14. Types that say one thing and accept another
 `ToolResult.content` is typed `list[Text | Image]` but accepts a string
 (`types.py:69-76`). That causes most of the pyright errors in both repos and hides real
-ones (`agent.py:164` reads `m.usage.output` on an optional; `openai_chat.py:325` indexes
-with an optional). Stop reasons are assigned plain strings where the type says `Stop`.
+ones. The cases checked (`agent.py:164`, `:180`, `openai_chat.py:325`) are guarded by the
+surrounding logic, so they're narrowing gaps rather than bugs, but the checker can't tell.
+Stop reasons are assigned plain strings where the type says `Stop`.
 **Fix:** a `ToolResult.text(...)` constructor (or type the field as `str | list`), narrow
 the block unions, and add pyright to the checks so it stays at zero. **S-M**
 
@@ -201,11 +216,15 @@ before them.
 
 ## Proposed order
 
-1. **Safety (½ day):** 1, 2, 3, 11, 15, 16, 17. Small, low risk, immediate value.
+1. **Safety (½ day):** 1, 2, 3, 3b, 11, 15, 16, 17. Small, low risk, immediate value.
+   pyright runs in report-only mode until phase 2 brings it to zero, so the new check
+   doesn't fail from the first commit.
 2. **Core structure (1-2 days):** 5 (provider interface and base), 8 (log state), 4 + 9 + 10
    (split the Agent, prompt builder, own interrupt), 12 (names), 13, 14 (types to zero).
-3. **Extensibility (1-2 days):** 6 (Session, command registry, shared presentation), 7
-   (tool classes, ToolContext, path policy).
+3. **Extensibility (1-2 days):** first, tests for the slash commands in both front-ends
+   (`cli.py` is 24% covered, so "behaviour unchanged" can't be checked yet). Then 6
+   (Session, command registry, shared presentation) and 7 (tool classes, ToolContext, path
+   policy).
 
 Then the next features (decisions file, summary, `recall`) go into the new context
 manager instead of `agent.py`.
