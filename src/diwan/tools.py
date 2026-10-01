@@ -15,6 +15,8 @@ from typing import Any
 
 from tarjuman import Cancel, Tool
 
+from .paths import Access, PathPolicy
+
 MAX_OUTPUT = 30_000
 MAX_LINE = 2_000
 
@@ -29,6 +31,7 @@ class Spec:
     run: Callable[..., str]
     readonly: bool
     cancellable: bool = False  # run() takes the turn's `cancel` signal and stops when it fires
+    path_arg: str | None = None  # the argument holding a path, checked by the path policy
 
     @property
     def name(self) -> str:
@@ -133,11 +136,21 @@ def _clip(text: str) -> str:
     return f"{text[:half]}\n\n[... {len(text) - MAX_OUTPUT} characters cut ...]\n\n{text[-half:]}"
 
 
-def make_tools(cwd: Path) -> dict[str, Spec]:
+def access(spec: Spec, args: dict[str, Any], policy: PathPolicy) -> Access:
+    """What a call needs: no question, the user's approval (outside the project), or refusal."""
+    if spec.path_arg is None:
+        return Access.INSIDE
+    return policy.check(str(args.get(spec.path_arg) or "."))
+
+
+def make_tools(cwd: Path, policy: PathPolicy | None = None) -> dict[str, Spec]:
     shell, shell_name = find_shell()
+    policy = policy or PathPolicy(cwd)
+
     def resolve(path: str) -> Path:
-        p = Path(path).expanduser()
-        return p if p.is_absolute() else cwd / p
+        if policy.check(path) is Access.DENIED:   # the agent refuses first; this is the backstop
+            raise ToolError(policy.why(path))
+        return policy.resolve(path)
 
     def read(path: str, offset: int = 1, limit: int = 2000) -> str:
         p = resolve(path)
@@ -275,7 +288,7 @@ def make_tools(cwd: Path) -> dict[str, Spec]:
             "path": {"type": "string"},
             "offset": {"type": "integer", "description": "first line to read, from 1"},
             "limit": {"type": "integer", "description": "number of lines (default 2000)"}},
-            ["path"])), read, True),
+            ["path"])), read, True, path_arg="path"),
         Spec(Tool("grep", "Search file contents with a regular expression (Python syntax). Returns "
                   "path:line: text for each match. Skips binary files and what .gitignore "
                   "excludes. Use it instead of grep/rg in bash.", obj({
@@ -284,22 +297,24 @@ def make_tools(cwd: Path) -> dict[str, Spec]:
             "glob": {"type": "string", "description": "only files matching, e.g. *.py or src/**/*.ts"},
             "ignore_case": {"type": "boolean"},
             "context": {"type": "integer", "description": "lines shown around each match (max 10)"}},
-            ["pattern"])), grep, True),
+            ["pattern"])), grep, True, path_arg="path"),
         Spec(Tool("glob", "Find files by name pattern, e.g. **/*.py or src/**/test_*.py. A pattern "
                   "without / matches at any depth. Recently changed files first.", obj({
             "pattern": {"type": "string"},
             "path": {"type": "string", "description": "folder to search (default: the project)"}},
-            ["pattern"])), glob, True),
+            ["pattern"])), glob, True, path_arg="path"),
         Spec(Tool("write", "Create a file or overwrite it entirely. Prefer `edit` for changes "
                   "to existing files.", obj({
             "path": {"type": "string"}, "content": {"type": "string"}}, ["path", "content"])),
-            write, False),
+            write, False, path_arg="path"),
         Spec(Tool("edit", "Replace exact text in a file. `old` must match exactly once "
                   "unless replace_all is set. Read the file first.", obj({
             "path": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"},
-            "replace_all": {"type": "boolean"}}, ["path", "old", "new"])), edit, False),
+            "replace_all": {"type": "boolean"}}, ["path", "old", "new"])), edit, False,
+            path_arg="path"),
         Spec(Tool("bash", f"Run a shell command in the project directory with {shell_name}. "
-                  "Use it to list and search files, run tests, git, etc.", obj({
+                  "Use it to run tests, builds, git and programs; use grep, glob and read to "
+                  "search and read files.", obj({
             "command": {"type": "string"},
             "timeout": {"type": "integer", "description": "seconds (default 120)"}},
             ["command"])), bash, False, cancellable=True),

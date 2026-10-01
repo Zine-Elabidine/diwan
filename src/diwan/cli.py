@@ -14,6 +14,7 @@ from . import __version__
 from .agent import Agent, Limits
 from .log import Log
 from .models import Ref, Router, describe, listing, switch
+from .paths import PathPolicy
 from .prompt import system_prompt
 from .tools import make_tools
 from .ui import Terminal, fmt_usage
@@ -50,9 +51,10 @@ def load_env_file() -> None:
 def build_agent(ref: Ref, log: Log, term: Terminal, cwd: Path, router: Router,
                 limits: Limits | None = None) -> Agent:
     client = router.client(ref.provider)
-    return Agent(client, ref.model, log, make_tools(cwd),
+    paths = PathPolicy(cwd)
+    return Agent(client, ref.model, log, make_tools(cwd, paths),
                  system_prompt(cwd, ref.model, client.provider),
-                 approve=term.approve, on=term.on, limits=limits)
+                 approve=term.approve, on=term.on, limits=limits, paths=paths)
 
 
 def start_ref(args: argparse.Namespace, log: Log | None, router: Router) -> Ref:

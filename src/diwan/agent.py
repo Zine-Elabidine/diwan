@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import traceback
 from collections.abc import Callable
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
@@ -16,7 +17,8 @@ from tarjuman import limits as tokens
 
 from . import context as ctx
 from .log import Log
-from .tools import Spec, ToolError
+from .paths import Access, PathPolicy
+from .tools import Spec, ToolError, access
 
 State = Literal["thinking", "running", "waiting", "idle"]
 Reason = Literal["done", "max_tokens", "max_steps", "interrupted", "error"]
@@ -109,11 +111,12 @@ class Agent:
     def __init__(self, provider: Provider, model: str, log: Log, tools: dict[str, Spec],
                  system: str, *, approve: Callable[[ToolCall, Spec], bool] = lambda c, s: True,
                  on: Callable[[UIEvent], None] = lambda e: None, limits: Limits | None = None,
-                 sleep: Callable[[float], None] | None = None):
+                 sleep: Callable[[float], None] | None = None, paths: PathPolicy | None = None):
         self.provider, self.model, self.log, self.tools = provider, model, log, tools
         self.system, self.approve, self.on = system, approve, on
         self.limits = limits or Limits()
         self.sleep = sleep  # for tests; by default retry waits end early on interrupt
+        self.paths = paths or PathPolicy(Path(log.events[0].data.get("cwd") or "."))
         self.total = Usage()
         self._cancel = Cancel()
         self._ratio = tokens.CHARS_PER_TOKEN   # the current model's chars per token, from context()
@@ -330,7 +333,12 @@ class Agent:
             args = call.args()
         except ValueError as e:
             return ToolResult(call.id, f"Invalid JSON arguments: {e}", True)
-        if not spec.readonly:
+        needed = access(spec, args, self.paths)
+        if needed is Access.DENIED:
+            result = ToolResult(call.id, self.paths.why(str(args.get(spec.path_arg))), True)
+            self.on(ToolFinished(call, result))
+            return result
+        if not spec.readonly or needed is Access.ASK:
             self.on(StateChanged("waiting"))
             allowed = self.approve(call, spec)
             self.log.append("approval", {"call_id": call.id, "allowed": allowed})
