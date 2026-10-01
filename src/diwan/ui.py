@@ -54,6 +54,9 @@ def summarize_call(call: ToolCall) -> str:
         return call.arguments[:80]
     if call.name == "bash":
         return short(a.get("command", ""))
+    if call.name in ("grep", "glob"):
+        where = [x for x in (a.get("glob"), a.get("path")) if x and x != "."]
+        return f"{a.get('pattern', '')!r}" + (f" in {short(' '.join(where))}" if where else "")
     if call.name == "read" and a.get("offset"):
         return f"{short(a.get('path', ''))}:{a['offset']}"
     return short(str(a.get("path", "")))
