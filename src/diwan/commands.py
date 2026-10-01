@@ -11,7 +11,7 @@ from typing import Literal
 from tarjuman import TarjumanError
 
 from .models import listing
-from .present import fmt_usage
+from .present import fmt_notes, fmt_usage
 from .session import Session
 
 Effect = Literal["exit", "think", "new", "model"]
@@ -54,6 +54,8 @@ COMMANDS = [
             lambda s, rest: Reply("\n".join(listing(rest, s.ref.provider)), "block")),
     Command("think", "", "show or hide the model's reasoning",
             lambda s, rest: Reply(effect="think")),
+    Command("notes", "", "the model's notes: decisions, rejected approaches, progress",
+            lambda s, rest: Reply(fmt_notes(s.agent.context_manager.notes()), "block")),
     Command("cost", "", "tokens and cost for this session",
             lambda s, rest: Reply(fmt_usage(s.agent.total))),
     Command("new", "", "start a new session", _new, busy_ok=lambda rest: False),

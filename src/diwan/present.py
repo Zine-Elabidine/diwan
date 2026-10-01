@@ -62,6 +62,8 @@ def summarize_call(call: ToolCall) -> str:
     if call.name in ("grep", "glob"):
         where = [x for x in (a.get("glob"), a.get("path")) if x and x != "."]
         return f"{a.get('pattern', '')!r}" + (f" in {short(' '.join(where))}" if where else "")
+    if call.name == "note":
+        return f"{a.get('kind', '')}: {_first_line(str(a.get('text', '')))}"
     if call.name == "read" and a.get("offset"):
         return f"{short(a.get('path', ''))}:{a['offset']}"
     return short(str(a.get("path", "")))
@@ -100,3 +102,13 @@ def turn_mark(reason: Reason) -> tuple[str, str]:
     """The mark at the start of a turn's footer, and its style."""
     return {"done": ("✓", "green"), "interrupted": ("■ interrupted", "yellow")}.get(
         reason, (f"■ stopped: {reason}", "red"))
+
+
+def _first_line(text: str, width: int = 100) -> str:
+    line = text.strip().splitlines()[0] if text.strip() else ""
+    return line if len(line) <= width else line[:width - 1] + "…"
+
+
+def fmt_notes(notes: list[tuple[str, str]]) -> str:
+    """/notes: one line per note, `kind: text`."""
+    return "\n".join(f"{kind}: {text}" for kind, text in notes) or "no notes yet"

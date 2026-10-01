@@ -4,14 +4,15 @@ A new tool is a new class here and one line in `default_tools`."""
 
 from .base import Tool, ToolContext, ToolError, access
 from .files import Edit, Read, Write
+from .notes import Note
 from .search import Glob, Grep
 from .shell import Bash, find_shell
 
 
 def default_tools() -> dict[str, Tool]:
     """Every tool, in the order the model is told about them (kept stable for the cache)."""
-    return {t.name: t for t in (Read(), Grep(), Glob(), Write(), Edit(), Bash())}
+    return {t.name: t for t in (Read(), Grep(), Glob(), Write(), Edit(), Bash(), Note())}
 
 
-__all__ = ["Bash", "Edit", "Glob", "Grep", "Read", "Tool", "ToolContext", "ToolError", "Write",
+__all__ = ["Bash", "Edit", "Glob", "Grep", "Note", "Read", "Tool", "ToolContext", "ToolError", "Write",
            "access", "default_tools", "find_shell"]
