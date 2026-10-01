@@ -217,6 +217,7 @@ class DiwanApp(App):
         self._cur: dict[str, Any] | None = None
         self._tools: dict[str, ToolView] = {}
         self.always: set[str] = set()
+        self._pending: set[Future[str]] = set()   # approvals the agent thread is waiting on
 
     # --- layout -----------------------------------------------------------------------------
 
@@ -385,14 +386,35 @@ class DiwanApp(App):
         if call.name in self.always:
             return True
         answer: Future[str] = Future()
-        self.call_from_thread(self._ask, call, answer)
-        result = answer.result()
+        self._pending.add(answer)
+        try:
+            self.call_from_thread(self._ask, call, answer)
+            result = self._wait(answer)
+        finally:
+            self._pending.discard(answer)
         if result == "always":
             self.always.add(call.name)
         return result in ("yes", "always")
 
-    def _ask(self, call: ToolCall, answer: Future) -> None:
-        self.push_screen(Approval(call), callback=answer.set_result)
+    def _ask(self, call: ToolCall, answer: Future[str]) -> None:
+        self.push_screen(Approval(call), callback=lambda r: _settle(answer, r or "no"))
+
+    def _wait(self, answer: Future[str]) -> str:
+        """Wait for the dialog, but never past the app's life: if the app closes (however it
+        closes), the answer is "no" and the turn stops, so the worker thread ends."""
+        while True:
+            try:
+                return answer.result(timeout=0.2)
+            except TimeoutError:
+                if not self.is_running:
+                    self.agent.interrupt()
+                    return "no"
+
+    def on_unmount(self) -> None:
+        for answer in list(self._pending):
+            _settle(answer, "no")
+        if self.running:
+            self.agent.interrupt()
 
     # --- agent events (app thread) ----------------------------------------------------------
 
@@ -491,3 +513,8 @@ class DiwanApp(App):
 
     def action_toggle_agents(self) -> None:
         self.query_one("#agents").toggle_class("shown")
+
+
+def _settle(answer: Future[str], value: str) -> None:
+    if not answer.done():
+        answer.set_result(value)

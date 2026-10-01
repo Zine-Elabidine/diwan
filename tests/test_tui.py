@@ -74,3 +74,20 @@ async def test_denied_and_history_replay(tmp_path):
     async with again.run_test(size=(100, 30)) as pilot:
         await pilot.pause(0.2)
         assert len(again.query(UserMsg)) == 1 and len(again.query(ToolView)) == 1
+
+
+async def test_quitting_during_an_approval_lets_the_agent_thread_end(tmp_path):
+    # before the fix, the agent thread waited forever on the dialog and the process never exited
+    app = make_app(tmp_path, [Message("assistant", [ToolCall(
+        "c1", "write", json.dumps({"path": "a.txt", "content": "x"}))])])
+    async with app.run_test() as pilot:
+        app.submit("write it")
+        for _ in range(100):
+            await pilot.pause(0.05)
+            if isinstance(app.screen, Approval):
+                break
+        assert isinstance(app.screen, Approval)
+        await pilot.press("ctrl+q")
+    for worker in app.workers:
+        await worker.wait()                          # returns: the thread was released
+    assert not (tmp_path / "a.txt").exists()         # and the pending write was refused
