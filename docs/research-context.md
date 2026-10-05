@@ -1,7 +1,7 @@
 # Context management and compaction: research (2026-09-30)
 
 What happens when a session outgrows the model's window, and how Diwan should handle it.
-The problem Zine names: compaction without memory is like starting a new session.
+The problem in one line: compaction without memory is like starting a new session.
 
 ## 1. How the agents in `refs/` do it
 

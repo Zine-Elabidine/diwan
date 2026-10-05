@@ -325,7 +325,7 @@ ACP) a thin client.
   Feedback says users want one surface across models.
 
 **✅ LOCKED (2026-09-27): Python, for both the runtime and the provider library.**
-- Why: his strongest language; the loop is I/O-bound; eval/RL work plugs in; Hermes, aider and
+- Why: my strongest language; the loop is I/O-bound; eval/RL work plugs in; Hermes, aider and
   OpenHands show Python doesn't block adoption.
 - Codex's Rust reasons (no Node install, OS sandbox bindings, ms startup for CI fan-out, a wire
   protocol) are product-at-scale reasons; we cover install with uv and the protocol with #14.

@@ -1,5 +1,8 @@
 # Code review: Diwan + Tarjuman (2026-10-01)
 
+> **Status:** every finding below was addressed on 2026-10-01; one part of 6 was kept on purpose (see [Progress](#progress)).
+> Known limit that stays: `bash` is not sandboxed; its approval is the only guard.
+
 A health check before building further. The question was: is the code clean, easy to
 maintain, and easy to extend? Findings are ranked by **how much they hurt the next features**
 (the decisions file, summary + recall, War Room, swarms), then by risk. Each one has a

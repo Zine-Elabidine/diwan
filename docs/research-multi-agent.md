@@ -47,7 +47,7 @@ Things nobody combines today:
   point, and resume a council after a crash (Claude Code's teams can't).
 - **Councils produce training data.** Every session records who proposed what, what the
   verifier said, and what won. That is exactly the data behind PARL-style orchestrator training.
-  It links to his RL/GRPO work: later, train a small model to decide *when to convene and whom
+  It links to my RL/GRPO work: later, train a small model to decide *when to convene and whom
   to seat*.
 - **Honest accounting.** Each council costs dollars and time and shows whether it changed the
   outcome, so you learn which panels are worth it.
@@ -204,7 +204,7 @@ model's generation, so the task-level saving is much smaller.
 ## Honest verdict on usefulness in agent workflows
 It pays off only where a harness makes **many small decisions that today cost an LLM call** (the
 rule of thumb quoted: decisions outnumber generations 10:1). In a plain coding loop there are few
-such calls, so the gain is small. That matches his doubt. But councils and swarms are full of
+such calls, so the gain is small. That matches my doubt. But councils and swarms are full of
 them:
 
 | Decision point in Diwan | Today | With a decision model |
@@ -224,8 +224,8 @@ them:
   (with logprobs when available). Tarjuman could host it as a second model family.
 - **Every decision is an event in the log**, with its inputs, probabilities and the eventual
   outcome, so each one can later be scored against what happened. That is also a training set
-  for fine-tuning his own decision head (contrastive heads on a frozen encoder, like CLM). This
-  sits right in his RL/fine-tuning skill set.
+  for fine-tuning my own decision head (contrastive heads on a frozen encoder, like CLM). This
+  sits right in my RL/fine-tuning skill set.
 - Calibration matters more than accuracy: use thresholds with an "ask the user / escalate to a
   big model" band in the middle.
 - Treat vendor claims as unverified until measured on our own tasks.
@@ -242,10 +242,10 @@ them:
 
 # Practitioner round 2: cross-model pairs, control planes, harness cost (2026-09-28)
 
-Triggered by two posts he shared: (1) a Claude Code vs Codex architecture comparison whose thesis
+Triggered by two posts: (1) a Claude Code vs Codex architecture comparison whose thesis
 is "Codex has P0 infrastructure and P2 choreography; Claude wins on the control plane", and
 (2) an Opus-in-Claude-Code + GPT-in-Codex peer setup inspired by Fusion.
-(Diwan rule: we keep only the general principles from post 1, never references to any leaked source.)
+(Only the general principles from post 1 are kept here.)
 
 ## Principles worth keeping from post 1
 - **Declared states, not emergent ones.** One turn state machine (preparing context, sampling,
@@ -268,7 +268,7 @@ is "Codex has P0 infrastructure and P2 choreography; Claude wins on the control 
   file: owner, role, files touched, **what it actually validated**. A top model is the
   tie-breaker. Rule: **no rubber-stamping.** Claude reviews the data contract before Codex
   writes; Codex re-checks Claude's claims against the real code.
-- Fusion claim he quoted: **~3/4 of the gain comes from the synthesis and checking step**, only
+- Fusion claim, as quoted in post 2: **~3/4 of the gain comes from the synthesis and checking step**, only
   ~1/4 from the models thinking differently.
 - r/ClaudeAI, "12 tasks every session leaves behind" (Claude Code + Hermes + Codex for a year):
   - "The reviewer being a different model than the author is the whole trick. Same model in the

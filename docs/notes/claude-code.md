@@ -3,7 +3,7 @@
 **Closed source.** `anthropics/claude-code` @ 7779afb holds only docs, example settings,
 hooks and official plugins. The engine ships as a bundled binary. These notes come from the
 official docs (code.claude.com/docs), the public plugins, and the Agent SDK
-(`claude-agent-sdk-python`), which shows the wire protocol. Leaked source is not used.
+(`claude-agent-sdk-python`), which shows the wire protocol.
 
 **In one line:** the harness that set the current vocabulary: CLAUDE.md, subagents, hooks,
 skills, plugins, slash commands, plan mode, permission modes. It does very little in the
