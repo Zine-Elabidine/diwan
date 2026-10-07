@@ -23,8 +23,9 @@ REPLY = 0.05            # the summarizer's answer (max_tokens)...
 REPLY_MAX = 8_000       # ...but no more than this
 USER_TEXT = 0.05        # the user's own messages, newest kept
 NOTES_TEXT = 0.03       # the notes, newest kept
-ITEM = 0.01             # one message or tool output in the transcript...
-ITEM_MIN, ITEM_MAX = 300, 4_000   # ...in characters, within these bounds
+# one message or tool output in the transcript, in characters: a fair share of the room, within
+# these bounds (the upper one keeps the summarizer's request cheap on large windows)
+ITEM_MIN, ITEM_MAX = 300, 4_000
 
 HEADER = ("This conversation was summarized to save context. The full session log is kept: "
           "nothing was deleted. The summary leaves out details: when you need an exact value, "
@@ -102,32 +103,41 @@ def choose_cut(messages: list[Message], masked: dict[str, str], after: int, budg
     return clean[0] if clean else fits[0]
 
 
-def transcript(messages: list[Message], masked: dict[str, str], item_chars: int) -> str:
+def transcript(messages: list[Message], masked: dict[str, str], room: int) -> str:
     """The messages as the model saw them (masks applied), as plain text for the summarizer:
-    no reasoning, long items cut in the middle. Plain text, so the summarizer's request has no
-    calls and results to pair up."""
+    no reasoning, long items cut in the middle so the whole fits in about `room` characters.
+    Plain text, so the summarizer's request has no calls and results to pair up."""
     messages = clearing.apply(messages, masked)
     calls = {c.id: c for m in messages for c in m.tool_calls}
-    lines = []
+    items: list[tuple[str, str]] = []
     for m in messages:
         if m.role in ("user", "system") and m.text:
-            lines.append(f"[{m.role}] {cut_middle(m.text, item_chars)}")
+            items.append((f"[{m.role}]", m.text))
         elif m.role == "assistant":
             if m.text:
-                lines.append(f"[assistant] {cut_middle(m.text, item_chars)}")
-            for c in m.tool_calls:
-                lines.append(f"[call {c.name}] {cut_middle(c.arguments, item_chars)}")
+                items.append(("[assistant]", m.text))
+            items += [(f"[call {c.name}]", c.arguments) for c in m.tool_calls]
         elif m.role == "tool":
             for r in m.tool_results:
                 call = calls.get(r.call_id)
                 name = call.name if call else "tool"
                 error = " (error)" if r.is_error else ""
-                lines.append(f"[{name} result{error}] {cut_middle(r.text, item_chars)}")
-    return "\n".join(lines)
+                items.append((f"[{name} result{error}]", r.text))
+    labels = sum(len(label) + 2 for label, _ in items)
+    cap = max(ITEM_MIN, min(fair_cap([len(t) for _, t in items], room - labels), ITEM_MAX))
+    return "\n".join(f"{label} {cut_middle(t, cap)}" for label, t in items)
 
 
-def item_chars(usable: int, chars_per_token: float) -> int:
-    return max(ITEM_MIN, min(int(effective(usable) * ITEM * chars_per_token), ITEM_MAX))
+def fair_cap(sizes: list[int], room: int) -> int:
+    """The largest per-item length that fits `room` in total: items shorter than it stay whole,
+    the long ones share what is left equally."""
+    left, n = room, len(sizes)
+    for i, size in enumerate(sorted(sizes)):
+        share = left // (n - i)
+        if size > share:
+            return max(share, 0)
+        left -= size
+    return max(sizes, default=0)
 
 
 def request(model: str, previous: str | None, text: str, max_tokens: int) -> Request:

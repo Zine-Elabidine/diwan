@@ -158,12 +158,23 @@ def test_the_transcript_is_plain_text_as_the_model_saw_it():
     msgs[1] = Message("assistant", [Reasoning("thinking hard"),
                                     ToolCall("c1", "read", '{"path": "calc.py"}')])
     msgs[2] = Message("tool", [ToolResult("c1", "x" * 5_000)])
-    t = summary.transcript(msgs, {"out:c2": "[cleared]"}, item_chars=300)
+    t = summary.transcript(msgs, {"out:c2": "[cleared]"}, room=1_000)
     assert "thinking hard" not in t                          # no reasoning
     assert '[call read] {"path": "calc.py"}' in t
     assert "[read result] " in t and "characters cut" in t   # long output cut in the middle
     assert "[bash result] [cleared]" in t                    # masks applied
     assert "[user] go ahead" in t
+
+
+def test_long_items_share_the_room_and_short_ones_stay_whole():
+    assert summary.fair_cap([100, 100, 5_000, 9_000], room=2_200) == 1_000
+    assert summary.fair_cap([100, 200], room=10_000) == 200          # everything fits
+    msgs = [Message.user("short question"),
+            Message("assistant", [ToolCall("c1", "read", '{"path": "errors.py"}')]),
+            Message("tool", [ToolResult("c1", "RETRYABLE = {RATE_LIMIT}\n" + "x" * 20_000)])]
+    t = summary.transcript(msgs, {}, room=6_000)
+    assert len(t) < 6_500 and "RETRYABLE = {RATE_LIMIT}" in t       # the start of the file survives
+    assert "x" * 1_500 in t                                          # far more than the old 1% share
 
 
 def test_the_summarizer_request_has_no_tools_and_updates_the_previous_note():

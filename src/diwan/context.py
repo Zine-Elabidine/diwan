@@ -138,10 +138,10 @@ class ContextManager:
             return None
         reply = summary.reply_tokens(use.usable)
         previous = before.model_text if before else None
-        text = summary.transcript(messages[after:cut], masked, summary.item_chars(use.usable, ratio))
-        # the summarizer's request must fit too: past that, the middle of the transcript goes
-        room = int((use.usable - reply - 1_000) * ratio) - len(previous or "")
-        text = summary.cut_middle(text, max(room, 1_000))
+        # the summarizer's request must fit: long items share the room, and if even their
+        # shortest form is too long, the middle of the transcript goes
+        room = max(int((use.usable - reply - 1_000) * ratio) - len(previous or ""), 1_000)
+        text = summary.cut_middle(summary.transcript(messages[after:cut], masked, room), room)
         msg = provider.complete(summary.request(model, previous, text, reply), cancel=cancel)
         note = msg.text.strip()
         if msg.stop != "end" or not note:
