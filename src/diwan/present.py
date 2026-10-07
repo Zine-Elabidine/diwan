@@ -64,6 +64,8 @@ def summarize_call(call: ToolCall) -> str:
         return f"{a.get('pattern', '')!r}" + (f" in {short(' '.join(where))}" if where else "")
     if call.name == "note":
         return f"{a.get('kind', '')}: {_first_line(str(a.get('text', '')))}"
+    if call.name == "recall":
+        return repr(a.get("query", ""))
     if call.name == "read" and a.get("offset"):
         return f"{short(a.get('path', ''))}:{a['offset']}"
     return short(str(a.get("path", "")))

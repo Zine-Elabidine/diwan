@@ -5,12 +5,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import tarjuman
 from tarjuman import Cancel
 
 from ..paths import Access, PathPolicy
+
+if TYPE_CHECKING:
+    from ..log import Log
 
 MAX_OUTPUT = 30_000
 
@@ -25,6 +28,7 @@ class ToolContext:
     sub-agent handle) are added here, not to each tool's signature."""
     paths: PathPolicy
     cancel: Cancel = field(default_factory=Cancel)   # the running turn's stop signal
+    log: Log | None = None                           # the session, for recall
 
     @property
     def cwd(self) -> Path:

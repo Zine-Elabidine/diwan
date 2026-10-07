@@ -294,7 +294,8 @@ class Agent:
         self.on(StateChanged("running"))
         self.on(ToolStarted(call))
         try:
-            result = ToolResult(call.id, tool.run(ToolContext(self.paths, self._cancel), **args))
+            ctx = ToolContext(self.paths, self._cancel, self.log)
+            result = ToolResult(call.id, tool.run(ctx, **args))
         except ToolError as e:
             result = ToolResult(call.id, str(e), True)
         except TypeError as e:
