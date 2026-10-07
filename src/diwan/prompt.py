@@ -49,6 +49,14 @@ your replies. You can't start agents yourself. Your final reply is all it gets b
 complete and self-contained (what you found, with path:line references, what you changed, and
 what you could not do), without greetings or offers of further help."""
 
+# a forked child keeps the parent's system prompt (for the cache): this goes in its task message
+FORK = """You are now a copy of the agent above, started by it to do one task; the agent itself
+continues separately. Nobody else will read your replies. You can't start agents. Your final
+reply is all it gets back: make it complete and self-contained (what you found, with path:line
+references, what you changed, and what you could not do), without greetings.{readonly}
+
+Task: {task}"""
+
 PROJECT_FILES = ("AGENTS.md", "DIWAN.md", "CLAUDE.md")
 
 

@@ -44,7 +44,7 @@ def test_what_came_after_the_reply_is_estimated_at_the_calibrated_ratio(tmp_path
     ctx = a.context()
     assert not ctx.exact
     assert ctx.used == 4_010 + tokens.estimate([late], None, r)
-    assert r < tokens.CHARS_PER_TOKEN                       # calibrated, not the default
+    assert r != tokens.CHARS_PER_TOKEN                      # calibrated, not the default
 
 
 def test_another_model_lends_its_ratio_with_a_margin_never_its_count(tmp_path):

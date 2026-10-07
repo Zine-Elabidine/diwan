@@ -82,3 +82,20 @@ def test_resuming_picks_the_users_session_not_a_childs(tmp_path):
     script = [call("p1", "agent", task="look", readonly=True), reply("seen"), reply("ok")]
     a, _, _ = run(tmp_path, script)
     assert Log.latest(str(tmp_path)).id == a.log.id
+
+
+def test_a_fork_starts_from_the_parents_last_request(tmp_path):
+    script = [call("p1", "agent", task="try the other approach", readonly=True, fork=True),
+              call("k1", "write", path="x.txt", content="hi"),     # refused: read-only fork
+              call("k2", "agent", task="deeper", readonly=True),   # refused: depth 1
+              reply("the other approach is worse"),
+              reply("ok")]
+    a, ended, _ = run(tmp_path, script)
+    assert ended.reason == "done" and not (tmp_path / "x.txt").exists()
+    parent, child = a.provider.requests[0], a.provider.requests[1]
+    assert child[:len(parent)] == parent                       # same system prompt and messages
+    assert "Task: try the other approach" in child[len(parent)].text
+    assert prompt.CHILD not in child[0].text                   # the parent's prompt, unchanged
+    refused = [r.text for m in a.provider.requests[3] for r in m.tool_results]
+    assert all("Unknown tool" in t for t in refused) and len(refused) == 2
+    assert "[agent: 3 steps;" in a.log.messages()[2].tool_results[0].text

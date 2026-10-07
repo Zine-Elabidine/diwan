@@ -53,8 +53,13 @@ class Agent:
                  system: str | Callable[[str, str], str], *,
                  approve: Callable[[ToolCall, Tool, bool], bool] = lambda c, s, outside: True,
                  on: Callable[[UIEvent], None] = lambda e: None, limits: Limits | None = None,
-                 sleep: Callable[[float], None] | None = None, paths: PathPolicy | None = None):
+                 sleep: Callable[[float], None] | None = None, paths: PathPolicy | None = None,
+                 child: bool = False, denied: frozenset[str] = frozenset()):
+        """child: started by another agent (it can't start agents itself).
+        denied: tools kept in the request (a fork's must match its parent's, for the cache)
+        but refused when called."""
         self.provider, self.model, self.log, self.tools = provider, model, log, tools
+        self.child, self.denied = child, denied
         # the system prompt names the model, so it is built again for each one
         self._prompt: Callable[[str, str], str] = (
             system if callable(system) else _fixed(system))
@@ -333,15 +338,17 @@ class Agent:
             args = call.args()
         except ValueError:
             return False
-        if tool is None or not tool.readonly or access(tool, args, self.paths) is not Access.INSIDE:
+        if (tool is None or call.name in self.denied or not tool.readonly
+                or access(tool, args, self.paths) is not Access.INSIDE):
             return False
         return call.name != "agent" or args.get("readonly") is True
 
     def _run_one(self, call: ToolCall) -> ToolResult:
         tool = self.tools.get(call.name)
-        if tool is None:
+        if tool is None or call.name in self.denied:
+            usable = [n for n in self.tools if n not in self.denied]
             return ToolResult(call.id, f"Unknown tool `{call.name}`. Available: "
-                                       f"{', '.join(self.tools)}", True)
+                                       f"{', '.join(usable)}", True)
         try:
             args = call.args()
         except ValueError as e:
@@ -364,7 +371,7 @@ class Agent:
         self.on(StateChanged("running"))
         self.on(ToolStarted(call))
         try:
-            spawn = self._spawn if "agent" in self.tools else None
+            spawn = self._spawn if "agent" in self.tools and not self.child else None
             ctx = ToolContext(self.paths, self._cancel, self.log, spawn)
             result = ToolResult(call.id, tool.run(ctx, **args))
         except ToolError as e:
@@ -376,26 +383,41 @@ class Agent:
         self.on(ToolFinished(call, result))
         return result
 
-    def _spawn(self, task: str, readonly: bool) -> str:
-        """Run `task` in a fresh child agent (the `agent` tool) and return its final answer.
-        Same model, approvals and limits; no `agent` tool (depth 1); its own session log;
-        stopped by this turn's stop signal; what it spends counts in this turn's usage."""
-        tools = {n: t for n, t in self.tools.items()
-                 if n != "agent" and (t.readonly or not readonly)}
-        log = Log.new(cwd=str(self.paths.project), parent=self.log.id, task=task)
+    def _spawn(self, task: str, readonly: bool, fork: bool = False) -> str:
+        """Run `task` in a child agent (the `agent` tool) and return its final answer. Same
+        model, approvals and limits; it can't start agents (depth 1); its own session log;
+        stopped by this turn's stop signal; what it spends counts in this turn's usage.
+        fork: it starts with this conversation as last sent, with the same system prompt and
+        tools (so the provider's cache covers it), the tools it may not use refused instead."""
+        log = Log.new(cwd=str(self.paths.project), parent=self.log.id, task=task, fork=fork)
         sid = log.id
+        if fork:
+            # the last request's messages: the view without the reply that holds this call
+            for m in self.context_manager.view()[:-1]:
+                log.add_message(m)
+            tools = self.tools
+            denied = frozenset({"agent"} | ({n for n, t in tools.items() if not t.readonly}
+                                            if readonly else set()))
+            system: str | Callable[[str, str], str] = self._prompt
+            text = prompt.FORK.format(task=task, readonly=(
+                " You may only read, search and take notes." if readonly else ""))
+        else:
+            tools = {n: t for n, t in self.tools.items()
+                     if n != "agent" and (t.readonly or not readonly)}
+            denied = frozenset()
+            parent_prompt = self._prompt
+            system = lambda p, m: parent_prompt(p, m) + prompt.CHILD  # noqa: E731
+            text = task
 
         def forward(ev: UIEvent) -> None:
             if isinstance(ev, StateChanged | ToolStarted | ToolFinished | ContextSummarized
                           | TurnEnded):
                 self.on(ChildEvent(sid, task, ev))
 
-        parent_prompt = self._prompt
-        child = Agent(self.provider, self.model, log, tools,
-                      lambda p, m: parent_prompt(p, m) + prompt.CHILD,
-                      approve=self.approve, on=forward, limits=self.limits, sleep=self.sleep,
-                      paths=self.paths)
-        ended = child.turn(task, cancel=self._cancel)   # its end reaches the UI through `forward`
+        child = Agent(self.provider, self.model, log, tools, system, approve=self.approve,
+                      on=forward, limits=self.limits, sleep=self.sleep, paths=self.paths,
+                      child=True, denied=denied)
+        ended = child.turn(text, cancel=self._cancel)   # its end reaches the UI through `forward`
         with self._lock:                                 # children may run side by side
             self._children_usage += child.total          # counted in this turn's usage
         self.on(StateChanged("running"))

@@ -106,9 +106,12 @@ is no memory; `/memory` shows what is loaded.
 
 ## Child agents
 
-The `agent` tool hands a self-contained task to a fresh agent: an empty context with only
-the task, the same model, the same approvals, no `agent` tool of its own (one level deep),
-and read-only tools when asked. It keeps its own session log; the parent gets back only its
+The `agent` tool hands a task to another agent: the same model, the same approvals, no
+agents of its own (one level deep), and read-only tools when asked. It starts *fresh* (only
+the task) or as a *fork*: a copy of the conversation sent exactly as the parent last sent it
+(same system prompt and tool list, the tools it may not use refused when called), so the
+provider's cache covers it; in a DeepSeek run its first request read 2.8k of 3.2k tokens
+from the cache. It keeps its own session log; the parent gets back only its
 final answer, so a long search costs the parent's context a few lines. Its steps show under
 the call (and in the agents panel, Ctrl+B), its cost counts in the turn, and Esc stops it
 with the parent.
