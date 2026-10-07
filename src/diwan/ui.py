@@ -13,7 +13,7 @@ from rich.text import Text
 from tarjuman import BlockStart, ReasoningDelta, TextDelta, ToolCall, ToolCallDelta, Usage
 
 from .context import ContextUse
-from .events import (ContextChanged, ContextCleared, Retrying, StateChanged, ToolFinished,
+from .events import (ContextChanged, ContextCleared, ContextSummarized, Retrying, StateChanged, ToolFinished,
                      ToolStarted, TurnEnded, UIEvent)
 from .present import (fmt_context, fmt_cost, fmt_usage, preview, short, summarize_call,
                       turn_mark)
@@ -109,6 +109,8 @@ class Terminal:
             self.context = ev.context
         elif isinstance(ev, ContextCleared):
             c.print(Text(f"  ↺ {ev.text}; the log keeps them", style="dim"))
+        elif isinstance(ev, ContextSummarized):
+            c.print(Text(f"  ↺ {ev.text}", style="dim"))
         elif isinstance(ev, Retrying):
             c.print(Text(f"  {ev.error.code}, retrying in {ev.wait:.0f}s (attempt {ev.attempt})",
                          style="yellow"))

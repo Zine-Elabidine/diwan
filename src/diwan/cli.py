@@ -89,9 +89,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--plain", action="store_true", help="simple line mode instead of the full-screen app")
     ap.add_argument("--context", type=int, metavar="TOKENS",
                     help="cap the context window (also used when a model's window is unknown)")
+    ap.add_argument("--no-summaries", action="store_true",
+                    help="never summarize the oldest messages automatically (/compact still works)")
     ap.add_argument("--version", action="version", version=f"diwan {__version__}")
     args = ap.parse_args(argv)
-    limits = Limits(context=args.context)
+    limits = Limits(context=args.context, summaries=not args.no_summaries)
 
     cwd = Path.cwd()
     log: Log | None = None
@@ -157,6 +159,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if reply.effect == "new":
             term.session = Usage()   # the footer's session total starts again, like /cost
+        if reply.effect == "compact":
+            session.agent.compact()
         if reply.effect == "think":
             term.show_reasoning = not term.show_reasoning
             reply.text = f"reasoning {'shown' if term.show_reasoning else 'hidden'}"

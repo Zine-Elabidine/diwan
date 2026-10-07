@@ -13,10 +13,10 @@ from tarjuman import (BlockEnd, BlockStart, Cancel, Event, Finish, Message, Prov
                       ReasoningDelta, Replay, TarjumanError, Text, TextDelta, ToolCall,
                       ToolCallDelta, ToolResult, Unknown, Usage, errors)
 
-from . import clearing
+from . import clearing, summary
 from .context import ContextManager, ContextUse
-from .events import (ContextChanged, ContextCleared, Reason, Retrying, StateChanged, ToolFinished,
-                     ToolStarted, TurnEnded, UIEvent)
+from .events import (ContextChanged, ContextCleared, ContextSummarized, Reason, Retrying,
+                     StateChanged, ToolFinished, ToolStarted, TurnEnded, UIEvent)
 from .log import Kind, Log
 from .paths import Access, PathPolicy
 from .tools import Tool, ToolContext, ToolError, access
@@ -39,6 +39,7 @@ class Limits:
     max_tokens: int = 16_000
     max_retries: int = 4
     context: int | None = None   # cap on the context window (also used when it is unknown)
+    summaries: bool = True       # summarize the oldest messages automatically when the context fills
 
 
 class Agent:
@@ -150,11 +151,50 @@ class Agent:
             self.on(ContextCleared(clearing.saved_text(p)))
             self._context_changed()
 
+    def _maybe_summarize(self) -> None:
+        """After clearing (which is free): if the context is still past the trigger, summarize."""
+        use = self.context_use
+        if self.limits.summaries and use.usable and summary.due(use.used, use.usable):
+            self._summarize()
+
+    def _summarize(self) -> bool:
+        """One summary, shown as a notice. A failed summary is logged and the turn goes on
+        unsummarized; an interrupt stops the turn as usual. True when a summary was logged."""
+        before = self.context_use.used
+        try:
+            r = self.context_manager.summarize(self.context_use, self.provider, self.model,
+                                               self._cancel)
+        except TarjumanError as e:
+            if e.code == errors.CANCELLED:
+                raise Interrupted from None
+            self.log.append(Kind.ERROR, {"code": e.code, "message": f"summary: {e.message}"})
+            self.on(ContextSummarized(f"could not summarize ({e.code}); going on without"))
+            return False
+        if r is None:
+            self.on(ContextSummarized("nothing to summarize yet"))
+            return False
+        self.total += r.usage
+        self._context_changed()
+        self.on(ContextSummarized(
+            f"summarized {r.replaced} message{'s' if r.replaced != 1 else ''} "
+            f"(~{before:,} → ~{self.context_use.used:,} tokens)"))
+        return True
+
+    def compact(self) -> None:
+        """Summarize now (/compact), between turns."""
+        self._cancel = Cancel()
+        self._context_changed()
+        try:
+            self._summarize()
+        except STOPS:
+            self.on(ContextSummarized("summary stopped"))
+
     def _sample(self) -> Message:
         self._maybe_clear()
+        self._maybe_summarize()
         messages = [Message.system(self.system), *self.context_manager.view()]
         tools = [t.definition for t in self.tools.values()]
-        attempt = 0
+        attempt, squeezed = 0, False
         while True:
             self.on(StateChanged("thinking"))
             partial: list[Any] = []
@@ -181,6 +221,13 @@ class Agent:
                 attempt += 1
                 # failed attempts are logged but never become part of the conversation
                 self.log.append(Kind.ERROR, {"code": e.code, "message": e.message, "attempt": attempt})
+                if (e.code == errors.CONTEXT_WINDOW_EXCEEDED and not squeezed
+                        and self.limits.summaries):
+                    # the gauge was wrong or the window smaller than known: summarize, retry once
+                    squeezed = True
+                    if self._summarize():
+                        messages = [Message.system(self.system), *self.context_manager.view()]
+                        continue
                 if not e.retryable or attempt > self.limits.max_retries:
                     raise
                 wait = e.retry_after or min(2 ** attempt, 30)

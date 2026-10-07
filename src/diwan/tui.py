@@ -23,8 +23,8 @@ from textual.widgets import Button, Collapsible, Markdown, Static, TextArea, Tre
 
 from . import __version__, commands
 from .agent import Agent
-from .events import (ContextCleared, Retrying, StateChanged, ToolFinished, ToolStarted, TurnEnded,
-                     UIEvent)
+from .events import (ContextCleared, ContextSummarized, Retrying, StateChanged, ToolFinished,
+                     ToolStarted, TurnEnded, UIEvent)
 from .log import Log
 from .models import Ref, Router
 from .present import (fmt_context, fmt_cost, fmt_tokens, fmt_usage, preview, short,
@@ -335,6 +335,9 @@ class DiwanApp(App):
             self.action_toggle_think()
         elif reply.effect == "new":
             self.chat.remove_children()
+        elif reply.effect == "compact":
+            self.running = True
+            self.run_compact()
         if reply.effect in ("new", "model"):
             self._update_top()
             self._update_agents()
@@ -349,6 +352,13 @@ class DiwanApp(App):
     def run_turn(self, text: str) -> None:
         try:
             self.agent.turn(text)
+        finally:
+            self.call_from_thread(self._turn_done)
+
+    @work(thread=True, exclusive=True)
+    def run_compact(self) -> None:
+        try:
+            self.agent.compact()
         finally:
             self.call_from_thread(self._turn_done)
 
@@ -440,6 +450,8 @@ class DiwanApp(App):
             self._follow()
         elif isinstance(ev, ContextCleared):
             await self._add(Static(f"↺ {ev.text}; the log keeps them", classes="notice"))
+        elif isinstance(ev, ContextSummarized):
+            await self._add(Static(f"↺ {ev.text}", classes="notice"))
         elif isinstance(ev, Retrying):
             await self._add(Static(f"{ev.error.code}, retrying in {ev.wait:.0f}s "
                                    f"(attempt {ev.attempt})", classes="notice"))

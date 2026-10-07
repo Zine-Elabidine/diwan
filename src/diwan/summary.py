@@ -27,7 +27,9 @@ ITEM = 0.01             # one message or tool output in the transcript...
 ITEM_MIN, ITEM_MAX = 300, 4_000   # ...in characters, within these bounds
 
 HEADER = ("This conversation was summarized to save context. The full session log is kept: "
-          "nothing was deleted.")
+          "nothing was deleted. The summary leaves out details: when you need an exact value, "
+          "line or error from earlier, read the file or run the command again instead of "
+          "answering from memory.")
 
 PROMPT = """You are writing a handoff note for an AI coding agent that will continue this \
 session with no other memory of it. Below is {what}. Write the note in these sections:
@@ -109,18 +111,18 @@ def transcript(messages: list[Message], masked: dict[str, str], item_chars: int)
     lines = []
     for m in messages:
         if m.role in ("user", "system") and m.text:
-            lines.append(f"[{m.role}] {_cap(m.text, item_chars)}")
+            lines.append(f"[{m.role}] {cut_middle(m.text, item_chars)}")
         elif m.role == "assistant":
             if m.text:
-                lines.append(f"[assistant] {_cap(m.text, item_chars)}")
+                lines.append(f"[assistant] {cut_middle(m.text, item_chars)}")
             for c in m.tool_calls:
-                lines.append(f"[call {c.name}] {_cap(c.arguments, item_chars)}")
+                lines.append(f"[call {c.name}] {cut_middle(c.arguments, item_chars)}")
         elif m.role == "tool":
             for r in m.tool_results:
                 call = calls.get(r.call_id)
                 name = call.name if call else "tool"
                 error = " (error)" if r.is_error else ""
-                lines.append(f"[{name} result{error}] {_cap(r.text, item_chars)}")
+                lines.append(f"[{name} result{error}] {cut_middle(r.text, item_chars)}")
     return "\n".join(lines)
 
 
@@ -147,7 +149,7 @@ def user_messages(messages: list[Message], chars: int) -> list[str]:
     for m in reversed(messages):
         if m.role != "user" or not m.text.strip():
             continue
-        text = _cap(m.text.strip(), max(chars // 4, ITEM_MIN))
+        text = cut_middle(m.text.strip(), max(chars // 4, ITEM_MIN))
         if total + len(text) > chars:
             break
         out.append(text)
@@ -217,7 +219,8 @@ def _newest(items: list[tuple[str, str]], chars: int) -> list[tuple[str, str]]:
     return out[::-1]
 
 
-def _cap(text: str, n: int) -> str:
+def cut_middle(text: str, n: int) -> str:
+    """`text`, or its start and end with the middle cut out, in about `n` characters."""
     if len(text) <= n:
         return text
     half = n // 2

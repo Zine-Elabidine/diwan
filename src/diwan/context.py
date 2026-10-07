@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from tarjuman import Message, Provider, Tool, tokens
+from tarjuman import Cancel, Message, Provider, TarjumanError, Tool, Usage, errors, tokens
 
 from . import clearing, summary
 from .log import Kind, Log
@@ -121,6 +121,42 @@ class ContextManager:
         if p is not None:
             self.log.append(Kind.MASK, {"entries": p.entries, "saved": p.saved})
         return p
+
+    def summarize(self, use: ContextUse, provider: Provider, model: str,
+                  cancel: Cancel | None = None) -> Summarized | None:
+        """Replace the oldest messages with a summary: ask the model for its handoff note, then
+        log a "summary" event (logged only once the note is in). None when the cut can't move
+        forward. Raises TarjumanError when the request fails; nothing is logged then."""
+        if not use.usable:
+            return None
+        before = self.log.summary()
+        after = before.cut if before else 0
+        messages, masked = self.log.messages(), self.log.masked()
+        ratio = use.chars_per_token
+        cut = summary.choose_cut(messages, masked, after, summary.tail_budget(use.usable), ratio)
+        if cut is None:
+            return None
+        reply = summary.reply_tokens(use.usable)
+        previous = before.model_text if before else None
+        text = summary.transcript(messages[after:cut], masked, summary.item_chars(use.usable, ratio))
+        # the summarizer's request must fit too: past that, the middle of the transcript goes
+        room = int((use.usable - reply - 1_000) * ratio) - len(previous or "")
+        text = summary.cut_middle(text, max(room, 1_000))
+        msg = provider.complete(summary.request(model, previous, text, reply), cancel=cancel)
+        note = msg.text.strip()
+        if msg.stop != "end" or not note:
+            raise TarjumanError(errors.SERVER_ERROR,
+                                f"the summary came back incomplete (stop: {msg.stop})")
+        final = summary.final_text(note, messages[:cut], use.usable, ratio)
+        self.log.append(Kind.SUMMARY, {"cut": cut, "text": final, "model_text": note,
+                                       "usage": (msg.usage or Usage()).__dict__})
+        return Summarized(cut - after, msg.usage or Usage())
+
+
+@dataclass
+class Summarized:
+    replaced: int   # messages newly covered by the summary
+    usage: Usage    # what the summarizer's request cost
 
 
 def _ask[T](lookup: Callable[[str], T | None], model: str) -> T | None:

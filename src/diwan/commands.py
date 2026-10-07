@@ -14,7 +14,7 @@ from .models import listing
 from .present import fmt_notes, fmt_usage
 from .session import Session
 
-Effect = Literal["exit", "think", "new", "model"]
+Effect = Literal["exit", "think", "new", "model", "compact"]
 
 
 @dataclass
@@ -41,6 +41,15 @@ def _model(s: Session, rest: str) -> Reply:
     return Reply(s.describe(), effect="model")
 
 
+def _compact(s: Session, rest: str) -> Reply:
+    if rest in ("on", "off"):
+        s.agent.limits.summaries = rest == "on"
+        return Reply(f"automatic summaries {rest}")
+    if rest:
+        return Reply("usage: /compact [on|off]", "error")
+    return Reply(effect="compact")   # the front-end runs it, off its UI thread
+
+
 def _new(s: Session, rest: str) -> Reply:
     log = s.new()
     return Reply(f"new session {log.id}", effect="new")
@@ -56,6 +65,8 @@ COMMANDS = [
             lambda s, rest: Reply(effect="think")),
     Command("notes", "", "the model's notes: decisions, rejected approaches, progress",
             lambda s, rest: Reply(fmt_notes(s.agent.context_manager.notes()), "block")),
+    Command("compact", "[on|off]", "summarize the oldest messages now; on/off: automatic "
+            "summaries when the context fills", _compact, busy_ok=lambda rest: rest in ("on", "off")),
     Command("cost", "", "tokens and cost for this session",
             lambda s, rest: Reply(fmt_usage(s.agent.total))),
     Command("new", "", "start a new session", _new, busy_ok=lambda rest: False),

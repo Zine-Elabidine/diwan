@@ -49,6 +49,12 @@ class ContextCleared:
 
 
 @dataclass
+class ContextSummarized:
+    """The oldest messages were summarized (the log keeps them), or a summary failed."""
+    text: str
+
+
+@dataclass
 class TurnEnded:
     reason: Reason
     steps: int
@@ -57,4 +63,4 @@ class TurnEnded:
 
 
 UIEvent = (StateChanged | ToolStarted | ToolFinished | Retrying | TurnEnded | ContextChanged
-           | ContextCleared | Event)
+           | ContextCleared | ContextSummarized | Event)
