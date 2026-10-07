@@ -1,8 +1,8 @@
 """What the model sees of the conversation, how full that is, and keeping it from filling.
 
 The tiers are in docs/research-context.md §5: the newest tool outputs stay verbatim, older
-ones are cleared (clearing.py), and later the oldest part is summarized. The log keeps
-everything; this module only decides what each request carries."""
+ones are cleared (clearing.py), and the oldest part is summarized (a "summary" event). The log
+keeps everything; this module only decides what each request carries."""
 
 from __future__ import annotations
 
@@ -47,8 +47,14 @@ class ContextManager:
         self.cap = cap
 
     def view(self) -> list[Message]:
-        """The conversation as the model sees it: the log's messages, with cleared outputs."""
-        return clearing.apply(self.log.messages(), self.log.masked())
+        """The conversation as the model sees it: the log's messages, with cleared outputs.
+        After a summary, its text (as stored, as a user message) replaces the first `cut`
+        messages; message `cut` onward is sent as before."""
+        s = self.log.summary()
+        if s is None:
+            return clearing.apply(self.log.messages(), self.log.masked())
+        rest = self.log.messages()[s.cut:]
+        return [Message.user(s.text), *clearing.apply(rest, self.log.masked())]
 
     def notes(self) -> list[tuple[str, str]]:
         """The model's notes on this branch, oldest first, as (kind, text). Read from the log,
@@ -72,13 +78,20 @@ class ContextManager:
         last usage report, plus an estimate for what came after it, at a chars-per-token ratio
         calibrated on that report. With no report from this model (a new session, or right
         after a switch) the whole history is estimated."""
-        request = [Message.system(system), *self.view()]   # log message k is request[k + 1]
+        request = [Message.system(system), *self.view()]
+        s = self.log.summary()
+        offset = 2 - s.cut if s else 1   # log message k is request[k + offset]
         used, exact, ratio, borrowed = None, False, tokens.CHARS_PER_TOKEN, None
         for i in range(len(request) - 1, 0, -1):
             m = request[i]
             u = m.usage
             if m.role != "assistant" or u is None:
                 continue
+            k = i - offset
+            if s and k < s.point:
+                # reported before the summary: that prompt still held the summarized messages,
+                # so neither its count nor its ratio fits this request (nor do older reports)
+                break
             prompt = u.input + u.cache_read + u.cache_write
             if not prompt:
                 continue
@@ -87,7 +100,7 @@ class ContextManager:
                     borrowed = tokens.ratio(request[:i], tools, prompt) or 0.0
                 continue
             ratio = tokens.ratio(request[:i], tools, prompt) or tokens.CHARS_PER_TOKEN
-            if any(point >= i for point in self.log.mask_points()):
+            if any(point > k for point in self.log.mask_points()):
                 # outputs were cleared after this report: the reported count is too high now
                 used = tokens.estimate(request, tools, ratio)
                 break
@@ -114,7 +127,9 @@ class ContextManager:
         every later request is built the same way. None when there is nothing worth clearing."""
         if not use.usable or (use.fraction or 0) < clearing.MASK_AT:
             return None
-        p = clearing.plan(self.log.messages(), self.log.masked(), use.usable, use.chars_per_token)
+        s = self.log.summary()   # summarized messages are no longer sent: nothing to clear there
+        sent = self.log.messages()[s.cut:] if s else self.log.messages()
+        p = clearing.plan(sent, self.log.masked(), use.usable, use.chars_per_token)
         if p is not None:
             self.log.append(Kind.MASK, {"entries": p.entries, "saved": p.saved})
         return p

@@ -27,6 +27,7 @@ class Kind(StrEnum):
     SESSION = "session"            # the first event: id, cwd, provider, model
     MESSAGE = "message"            # a conversation message (tarjuman's neutral format)
     MASK = "mask"                  # tool outputs cleared from later requests (clearing.py)
+    SUMMARY = "summary"            # the oldest messages, replaced in later requests by a summary
     MODEL_SWITCH = "model_switch"  # the conversation moved to another provider/model
     MODEL = "model"                # the same, from older sessions (no provider)
     APPROVAL = "approval"          # the user's answer to a tool call
@@ -43,6 +44,15 @@ class Event:
     ts: float = field(default_factory=time.time)
 
 
+@dataclass(frozen=True)
+class Summary:
+    """A "summary" event: the first `cut` messages of the branch are sent as `text` instead.
+    `point` is how many messages the branch had when the summary was made."""
+    cut: int
+    text: str
+    point: int
+
+
 @dataclass
 class _Branch:
     """What the path to `head` adds up to, kept so each request doesn't re-walk the log."""
@@ -50,6 +60,7 @@ class _Branch:
     messages: list[Message] = field(default_factory=list)
     masked: dict[str, str] = field(default_factory=dict)
     mask_points: list[int] = field(default_factory=list)
+    summary: Summary | None = None   # the latest one: each summary covers the ones before it
 
     def add(self, e: Event) -> None:
         if e.type == Kind.MESSAGE:
@@ -57,6 +68,8 @@ class _Branch:
         elif e.type == Kind.MASK:
             self.masked.update(e.data["entries"])
             self.mask_points.append(len(self.messages))
+        elif e.type == Kind.SUMMARY:
+            self.summary = Summary(e.data["cut"], e.data["text"], len(self.messages))
         self.head = e.id
 
 
@@ -145,6 +158,10 @@ class Log:
     def mask_points(self) -> list[int]:
         """For each "mask" event on this branch, how many messages came before it."""
         return list(self._branch().mask_points)
+
+    def summary(self) -> Summary | None:
+        """The latest "summary" event on this branch, if any."""
+        return self._branch().summary
 
     def current_model(self) -> tuple[str | None, str | None]:
         """(provider, model) in use at the head: the last switch on this branch, else the
