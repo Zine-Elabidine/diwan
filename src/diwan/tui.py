@@ -324,7 +324,8 @@ class DiwanApp(App):
             return
         if self.running:
             self.agent.send(text)   # shown when the model gets it, at the next step
-            self.notify("Queued: the model gets it after the current step. Esc stops it instead.")
+            self.notify("Queued: the model gets it after the current step. Esc stops the turn "
+                        "and puts it back here.")
             return
         self.chat.mount(UserMsg(RText(text)))
         self.chat.scroll_end(animate=False)
@@ -362,10 +363,11 @@ class DiwanApp(App):
 
     @work(thread=True, exclusive=True)
     def run_turn(self, text: str) -> None:
+        reason = None
         try:
-            self.agent.turn(text)
+            reason = self.agent.turn(text).reason
         finally:
-            self.call_from_thread(self._turn_done)
+            self.call_from_thread(self._turn_done, reason)
 
     @work(thread=True, exclusive=True)
     def run_compact(self) -> None:
@@ -374,8 +376,12 @@ class DiwanApp(App):
         finally:
             self.call_from_thread(self._turn_done)
 
-    def _turn_done(self) -> None:
-        left = self.agent.take_inbox()   # typed too late for the turn (or after Esc): the next one
+    def _turn_done(self, reason: str | None = None) -> None:
+        left = self.agent.take_inbox()   # typed too late for the turn: it starts the next one
+        if left and reason == "interrupted":
+            # stopped on purpose: nothing starts by itself; the message waits in the input
+            self.prompt.text = "\n\n".join([*left, *([self.prompt.text] if self.prompt.text else [])])
+            left = []
         if left and self.is_running:
             text = "\n\n".join(left)
             self.chat.mount(UserMsg(RText(text)))

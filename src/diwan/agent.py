@@ -83,10 +83,7 @@ class Agent:
                 "model with a bigger window, or start a new session with /new.")
         self.provider, self.model = provider, model
         self.system = self._prompt(provider.provider, model)
-        self.log.append(Kind.MODEL_SWITCH, {"provider": provider.provider, "model": model})
-        self.log.add_message(Message.system(
-            f"The conversation now continues on `{model}` (via {provider.provider}). Earlier "
-            "replies may have been written by other models."))
+        self.record_model()
         self._context_changed()
 
     def context(self, provider: Provider | None = None, model: str | None = None) -> ContextUse:
@@ -106,6 +103,14 @@ class Agent:
                                       "traceback": traceback.format_exc()})
             return
         self.on(ContextChanged(self.context_use))
+
+    def record_model(self) -> None:
+        """Log that the conversation continues on this agent's model (after a switch, or a
+        /rewind to before one), and tell the model."""
+        self.log.append(Kind.MODEL_SWITCH, {"provider": self.provider.provider, "model": self.model})
+        self.log.add_message(Message.system(
+            f"The conversation now continues on `{self.model}` (via {self.provider.provider}). "
+            "Earlier replies may have been written by other models."))
 
     def interrupt(self) -> None:
         """Stop the running turn now (safe from any thread). One signal reaches everything the

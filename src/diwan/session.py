@@ -60,8 +60,12 @@ class Session:
     def rewind(self, n: int = 1) -> str | None:
         """Back to before the user's n-th last message (see Log.rewind); its text, or None."""
         text = self.log.rewind(n)
-        if text is not None:
-            self.agent.context_use = self.agent.context()
+        if text is None:
+            return None
+        a = self.agent
+        if self.log.current_model() != (a.provider.provider, a.model):
+            a.record_model()   # the new branch went back to before a /model: keep the current one
+        a.context_use = a.context()
         return text
 
     def describe(self) -> str:

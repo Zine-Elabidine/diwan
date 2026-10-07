@@ -63,3 +63,18 @@ async def test_the_app_redraws_and_puts_the_message_back(tmp_path):
         app.command("/rewind")
         await pilot.pause(0.2)
         assert len(app.query(UserMsg)) == 1 and app.prompt.text == "two"
+
+
+def test_rewinding_past_a_model_switch_keeps_the_current_model(tmp_path):
+    from diwan.models import Ref, Router
+    from diwan.session import Session
+
+    log = Log.new(cwd=str(tmp_path), provider="openrouter", model="old-model")
+    log.add_message(Message.user("question 0"))
+    log.add_message(Message("assistant", [Text("answer 0")]))
+    s = Session(lambda lg, ref: Agent(Fake([]), ref.model, lg, default_tools(), "sys"), log,
+                Ref("openrouter", "old-model"), Router("openrouter"), tmp_path)
+    s.agent.use(Fake([]), "new-model")
+    log.add_message(Message.user("question 1"))
+    assert s.rewind(2) == "question 0"
+    assert Log.load(log.path).current_model()[1] == "new-model"
