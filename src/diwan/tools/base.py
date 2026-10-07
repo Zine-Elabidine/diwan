@@ -29,6 +29,7 @@ class ToolContext:
     paths: PathPolicy
     cancel: Cancel = field(default_factory=Cancel)   # the running turn's stop signal
     log: Log | None = None                           # the session, for recall
+    spawn: Callable[[str, bool], str] | None = None  # run a task in a fresh agent (task, readonly)
 
     @property
     def cwd(self) -> Path:

@@ -13,10 +13,10 @@ from rich.text import Text
 from tarjuman import BlockStart, ReasoningDelta, TextDelta, ToolCall, ToolCallDelta, Usage
 
 from .context import ContextUse
-from .events import (ContextChanged, ContextCleared, ContextSummarized, Retrying, StateChanged, ToolFinished,
-                     ToolStarted, TurnEnded, UIEvent)
-from .present import (fmt_context, fmt_cost, fmt_usage, preview, short, summarize_call,
-                      turn_mark)
+from .events import (ChildEvent, ContextChanged, ContextCleared, ContextSummarized, Retrying,
+                     StateChanged, ToolFinished, ToolStarted, TurnEnded, UIEvent)
+from .present import (child_line, fmt_context, fmt_cost, fmt_usage, preview, short,
+                      summarize_call, turn_mark)
 from .session import Approvals
 from .tools import Tool
 
@@ -105,6 +105,10 @@ class Terminal:
                 c.print(Text(("  ⎿ " if i == 0 else "    ") + short(line)[:200], style=style))
             if len(lines) > TOOL_LINES:
                 c.print(Text(f"    … {len(lines) - TOOL_LINES} more lines", style="dim"))
+        elif isinstance(ev, ChildEvent):
+            line = child_line(ev)
+            if line:
+                c.print(Text(f"    {line}", style="dim"))
         elif isinstance(ev, ContextChanged):
             self.context = ev.context
         elif isinstance(ev, ContextCleared):

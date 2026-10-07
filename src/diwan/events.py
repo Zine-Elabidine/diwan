@@ -61,6 +61,14 @@ class UserAdded:
 
 
 @dataclass
+class ChildEvent:
+    """Something a child agent (the `agent` tool) did: its state, tools, summaries, its end."""
+    id: str        # the child's session id
+    task: str
+    event: StateChanged | ToolStarted | ToolFinished | ContextSummarized | TurnEnded
+
+
+@dataclass
 class TurnEnded:
     reason: Reason
     steps: int
@@ -68,5 +76,5 @@ class TurnEnded:
     error: str | None = None
 
 
-UIEvent = (StateChanged | ToolStarted | ToolFinished | Retrying | UserAdded | TurnEnded
-           | ContextChanged | ContextCleared | ContextSummarized | Event)
+UIEvent = (StateChanged | ToolStarted | ToolFinished | Retrying | UserAdded | ChildEvent
+           | TurnEnded | ContextChanged | ContextCleared | ContextSummarized | Event)

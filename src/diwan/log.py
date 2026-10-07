@@ -101,14 +101,15 @@ class Log:
 
     @classmethod
     def latest(cls, cwd: str) -> Log | None:
-        """The most recent session started in `cwd`."""
+        """The most recent session started in `cwd` by the user (a child agent's isn't one)."""
         d = sessions_dir()
         if not d.exists():
             return None
         for p in sorted(d.glob("*.jsonl"), reverse=True):
             with p.open(encoding="utf-8") as f:
                 first = f.readline()
-            if first and json.loads(first)["data"].get("cwd") == cwd:
+            meta = json.loads(first)["data"] if first else {}
+            if meta.get("cwd") == cwd and "parent" not in meta:
                 return cls.load(p)
         return None
 

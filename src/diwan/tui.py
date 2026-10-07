@@ -23,11 +23,11 @@ from textual.widgets import Button, Collapsible, Markdown, Static, TextArea, Tre
 
 from . import __version__, commands
 from .agent import Agent
-from .events import (ContextCleared, ContextSummarized, Retrying, StateChanged, ToolFinished,
+from .events import (ChildEvent, ContextCleared, ContextSummarized, Retrying, StateChanged, ToolFinished,
                      ToolStarted, TurnEnded, UIEvent, UserAdded)
 from .log import Log
 from .models import Ref, Router
-from .present import (fmt_context, fmt_cost, fmt_tokens, fmt_usage, preview, short,
+from .present import (child_line, fmt_context, fmt_cost, fmt_tokens, fmt_usage, preview, short,
                       summarize_call, turn_mark)
 from .session import Approvals, Session
 from .tools import Tool
@@ -203,6 +203,7 @@ class DiwanApp(App):
         self._state_since = time.monotonic()
         self._cur: dict[str, Any] | None = None
         self._tools: dict[str, ToolView] = {}
+        self._children: dict[str, tuple[str, str]] = {}   # child agents: id -> (task, state)
         self._pending: set[Future[str]] = set()   # approvals the agent thread is waiting on
 
     @property
@@ -255,7 +256,10 @@ class DiwanApp(App):
         tree = self.query_one("#agents", Tree)
         tree.clear()
         tree.root.expand()
-        tree.root.add_leaf(f"● main · {self.agent.model.split('/')[-1]} · {self.state}")
+        main = tree.root.add(f"● main · {self.agent.model.split('/')[-1]} · {self.state}",
+                             expand=True)
+        for task, state in self._children.values():
+            main.add_leaf(f"{'●' if state != 'done' else '○'} {short(task)[:40]} · {state}")
 
     def _tick(self) -> None:
         self._frame += 1
@@ -460,6 +464,15 @@ class DiwanApp(App):
             await self._add(Static(f"↺ {ev.text}; the log keeps them", classes="notice"))
         elif isinstance(ev, ContextSummarized):
             await self._add(Static(f"↺ {ev.text}", classes="notice"))
+        elif isinstance(ev, ChildEvent):
+            e = ev.event
+            if isinstance(e, StateChanged | TurnEnded):
+                state = e.state if isinstance(e, StateChanged) else "done"
+                self._children[ev.id] = (ev.task, state)
+                self._update_agents()
+            line = child_line(ev)
+            if line:
+                await self._add(Static(RText(f"  {line}"), classes="notice"))
         elif isinstance(ev, UserAdded):
             await self._close_block()
             await self._add(UserMsg(RText(ev.text)))

@@ -2,6 +2,7 @@
 for the model, whether it only reads, which argument holds a path, and `run(ctx, **args)`.
 A new tool is a new class here and one line in `default_tools`."""
 
+from .agents import Agent
 from .base import Tool, ToolContext, ToolError, access
 from .files import Edit, Read, Write
 from .notes import Note
@@ -12,8 +13,9 @@ from .shell import Bash, find_shell
 
 def default_tools() -> dict[str, Tool]:
     """Every tool, in the order the model is told about them (kept stable for the cache)."""
-    return {t.name: t for t in (Read(), Grep(), Glob(), Write(), Edit(), Bash(), Note(), Recall())}
+    return {t.name: t for t in (Read(), Grep(), Glob(), Write(), Edit(), Bash(), Note(), Recall(),
+                                    Agent())}
 
 
-__all__ = ["Bash", "Edit", "Glob", "Grep", "Note", "Read", "Recall", "Tool", "ToolContext", "ToolError",
-           "Write", "access", "default_tools", "find_shell"]
+__all__ = ["Agent", "Bash", "Edit", "Glob", "Grep", "Note", "Read", "Recall", "Tool", "ToolContext",
+           "ToolError", "Write", "access", "default_tools", "find_shell"]

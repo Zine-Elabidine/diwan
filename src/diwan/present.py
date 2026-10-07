@@ -8,7 +8,7 @@ from pathlib import Path
 from tarjuman import ToolCall, Usage
 
 from .context import ContextUse
-from .events import Reason
+from .events import ChildEvent, ContextSummarized, Reason, ToolFinished, ToolStarted, TurnEnded
 
 
 def fmt_tokens(n: int) -> str:
@@ -66,9 +66,25 @@ def summarize_call(call: ToolCall) -> str:
         return f"{a.get('kind', '')}: {_first_line(str(a.get('text', '')))}"
     if call.name == "recall":
         return repr(a.get("query", ""))
+    if call.name == "agent":
+        return ("(read-only) " if a.get("readonly") else "") + _first_line(str(a.get("task", "")), 80)
     if call.name == "read" and a.get("offset"):
         return f"{short(a.get('path', ''))}:{a['offset']}"
     return short(str(a.get("path", "")))
+
+
+def child_line(ev: ChildEvent) -> str | None:
+    """One line for what a child agent did, or None for what isn't worth a line."""
+    e = ev.event
+    if isinstance(e, ToolStarted):
+        return f"↳ {e.call.name} {summarize_call(e.call)}"
+    if isinstance(e, ToolFinished) and e.result.is_error:
+        return f"↳ {e.call.name} failed: {_first_line(e.result.text, 80)}"
+    if isinstance(e, ContextSummarized):
+        return f"↳ ↺ {e.text}"
+    if isinstance(e, TurnEnded):
+        return f"↳ agent finished ({e.reason}): {e.steps} steps · {fmt_usage(e.usage)}"
+    return None
 
 
 def fmt_window(n: int) -> str:

@@ -14,9 +14,9 @@ from tarjuman import (BlockEnd, BlockStart, Cancel, Event, Finish, Message, Prov
                       ReasoningDelta, Replay, TarjumanError, Text, TextDelta, ToolCall,
                       ToolCallDelta, ToolResult, Unknown, Usage, errors)
 
-from . import clearing, summary
+from . import clearing, prompt, summary
 from .context import ContextManager, ContextUse
-from .events import (ContextChanged, ContextCleared, ContextSummarized, Reason, Retrying,
+from .events import (ChildEvent, ContextChanged, ContextCleared, ContextSummarized, Reason, Retrying,
                      StateChanged, ToolFinished, ToolStarted, TurnEnded, UIEvent, UserAdded)
 from .log import Kind, Log
 from .paths import Access, PathPolicy
@@ -62,6 +62,7 @@ class Agent:
         self.paths = paths or PathPolicy(Path(log.events[0].data.get("cwd") or "."))
         self.total = Usage()
         self._cancel = Cancel()
+        self._children_usage = Usage()   # what child agents spent during the running turn
         self._inbox: list[str] = []   # typed while a turn runs: given to the model at the next step
         self._inbox_lock = threading.Lock()
         self.context_manager = ContextManager(log, self.limits.max_tokens, self.limits.context)
@@ -137,8 +138,9 @@ class Agent:
         if self._cancel.cancelled:
             raise Interrupted
 
-    def turn(self, text: str) -> TurnEnded:
-        self._cancel = Cancel()
+    def turn(self, text: str, cancel: Cancel | None = None) -> TurnEnded:
+        """cancel: a stop signal to share (a child agent stops with its parent's turn)."""
+        self._cancel = cancel or Cancel()
         self.log.add_message(Message.user(text))
         steps, usage = 0, Usage()
         try:
@@ -327,7 +329,8 @@ class Agent:
         self.on(StateChanged("running"))
         self.on(ToolStarted(call))
         try:
-            ctx = ToolContext(self.paths, self._cancel, self.log)
+            spawn = self._spawn if "agent" in self.tools else None
+            ctx = ToolContext(self.paths, self._cancel, self.log, spawn)
             result = ToolResult(call.id, tool.run(ctx, **args))
         except ToolError as e:
             result = ToolResult(call.id, str(e), True)
@@ -338,7 +341,37 @@ class Agent:
         self.on(ToolFinished(call, result))
         return result
 
+    def _spawn(self, task: str, readonly: bool) -> str:
+        """Run `task` in a fresh child agent (the `agent` tool) and return its final answer.
+        Same model, approvals and limits; no `agent` tool (depth 1); its own session log;
+        stopped by this turn's stop signal; what it spends counts in this turn's usage."""
+        tools = {n: t for n, t in self.tools.items()
+                 if n != "agent" and (t.readonly or not readonly)}
+        log = Log.new(cwd=str(self.paths.project), parent=self.log.id, task=task)
+        sid = log.id
+
+        def forward(ev: UIEvent) -> None:
+            if isinstance(ev, StateChanged | ToolStarted | ToolFinished | ContextSummarized
+                          | TurnEnded):
+                self.on(ChildEvent(sid, task, ev))
+
+        parent_prompt = self._prompt
+        child = Agent(self.provider, self.model, log, tools,
+                      lambda p, m: parent_prompt(p, m) + prompt.CHILD,
+                      approve=self.approve, on=forward, limits=self.limits, sleep=self.sleep,
+                      paths=self.paths)
+        ended = child.turn(task, cancel=self._cancel)   # its end reaches the UI through `forward`
+        self._children_usage += child.total             # counted in this turn's usage
+        self.on(StateChanged("running"))
+        answer = next((m.text for m in reversed(log.messages())
+                       if m.role == "assistant" and m.text.strip()), "")
+        how = f"{ended.steps} step{'s' if ended.steps != 1 else ''}"
+        if ended.reason != "done":
+            how += f", ended: {ended.reason}" + (f" ({ended.error})" if ended.error else "")
+        return f"{answer or '(no answer)'}\n\n[agent: {how}; its log: {log.path.name}]"
+
     def _end(self, reason: Reason, steps: int, usage: Usage, error: str | None = None) -> TurnEnded:
+        usage, self._children_usage = usage + self._children_usage, Usage()
         self.total += usage
         self._context_changed()
         self.log.append(Kind.TURN_END, {"reason": reason, "steps": steps, "usage": usage.__dict__,
