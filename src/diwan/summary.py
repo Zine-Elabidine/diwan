@@ -161,7 +161,9 @@ def request(model: str, previous: str | None, text: str, max_tokens: int) -> Req
 # and nothing is shortened), with this request added at the end
 IN_PLACE = """Stop working on the task for a moment and do not call any tool. Write a handoff \
 note for an AI coding agent that will continue this session with no other memory of it, \
-covering the conversation above{previous}. Write it in these sections:
+covering the conversation above{previous}. The most recent part, from {keep}, stays in the \
+context word for word after your note: put the detail into what comes before it, and keep \
+Goal, In progress and Next steps current. Write it in these sections:
 
 """ + SECTIONS
 
@@ -174,13 +176,31 @@ def note_text(text: str) -> str:
     return text[start:].strip() if start >= 0 else ""
 
 
-def in_place_request(model: str, system: str, tools: list[Tool], sent: list[Message],
-                     updates: bool, max_tokens: int) -> Request:
-    """The summarizer's request in place: `sent` is the start of the view, as last sent."""
+def in_place_request(model: str, system: str, tools: list[Tool], view: list[Message],
+                     kept: Message, updates: bool, max_tokens: int) -> Request:
+    """The summarizer's request in place: the whole view, exactly as last sent (the provider
+    caches the newest request: a shorter prefix may have expired, at Anthropic in 5 minutes),
+    then the ask. `kept` is the first message that stays after the note."""
     previous = (" (its first message is the previous note: update it and keep what still holds)"
                 if updates else "")
-    ask = Message.user(IN_PLACE.format(previous=previous))
-    return Request(model, [Message.system(system), *sent, ask], tools, max_tokens=max_tokens)
+    ask = Message.user(IN_PLACE.format(previous=previous, keep=_quote(kept)))
+    return Request(model, [Message.system(system), *view, ask], tools, max_tokens=max_tokens)
+
+
+def _quote(m: Message) -> str:
+    """How the ask points at a message: its opening words, or its first tool call."""
+    who = {"user": "the user's message", "assistant": "your message"}.get(m.role, "the message")
+    if m.text.strip():
+        words = " ".join(m.text.split())
+        return f'{who} that begins "{words[:80]}{"..." if len(words) > 80 else ""}"'
+    if m.tool_calls:
+        return f"your {m.tool_calls[0].name} call ({_first_args(m.tool_calls[0].arguments)})"
+    return who
+
+
+def _first_args(arguments: str) -> str:
+    one = " ".join(arguments.split())
+    return one if len(one) <= 80 else one[:80] + "..."
 
 
 def user_messages(messages: list[Message], chars: int) -> list[str]:

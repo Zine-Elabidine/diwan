@@ -58,7 +58,8 @@ exactly as the model last saw it, with one request at the end. The provider's pr
 covers almost all of it and nothing is shortened. If that request fails, a plain-text
 transcript is sent instead, long tool outputs sharing the room. On a 31k-token DeepSeek session
 both ways answered the same follow-up questions about as well; in place, 27.4k of the 27.5k
-input tokens came from the cache.
+input tokens came from the cache (on Claude Haiku, 5.8k of 6.1k). `/compact` summarizes all it
+may, keeping only the model's latest message onward; the automatic summary cuts just enough.
 
 Summaries leave details out, so the model is told to re-read or use `recall` for exact values
 rather than answer from memory. In an early test without `recall`, DeepSeek invented the

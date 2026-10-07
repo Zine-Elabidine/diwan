@@ -123,20 +123,22 @@ class ContextManager:
         return p
 
     def summarize(self, use: ContextUse, provider: Provider, model: str,
-                  cancel: Cancel | None = None, in_place: tuple[str, list[Tool]] | None = None
-                  ) -> Summarized | None:
+                  cancel: Cancel | None = None, in_place: tuple[str, list[Tool]] | None = None,
+                  everything: bool = False) -> Summarized | None:
         """Replace the oldest messages with a summary: ask the model for its handoff note, then
         log a "summary" event (logged only once the note is in). None when the cut can't move
         forward. Raises TarjumanError when the request fails; nothing is logged then.
         in_place: (system prompt, tools) to send the conversation again as is and ask for the
-        note at the end, instead of a plain-text transcript (summary.IN_PLACE)."""
+        note at the end, instead of a plain-text transcript (summary.IN_PLACE).
+        everything: cut as far as allowed (/compact), not just enough to reach the target."""
         if not use.usable:
             return None
         before = self.log.summary()
         after = before.cut if before else 0
         messages, masked = self.log.messages(), self.log.masked()
         ratio = use.chars_per_token
-        cut = summary.choose_cut(messages, masked, after, summary.tail_budget(use.usable), ratio)
+        budget = 0 if everything else summary.tail_budget(use.usable)
+        cut = summary.choose_cut(messages, masked, after, budget, ratio)
         if cut is None:
             return None
         reply = summary.reply_tokens(use.usable)
@@ -144,10 +146,11 @@ class ContextManager:
         spent = Usage()
         note = None
         if in_place:
-            # the conversation as last sent (the cache is reused), up to log message `cut`
+            # the whole conversation as last sent (the cache is reused); the note is to cover
+            # what comes before log message `cut`
             system, tools = in_place
-            sent = self.view()[:cut - after + (1 if before else 0)]
-            req = summary.in_place_request(model, system, tools, sent, before is not None, reply)
+            req = summary.in_place_request(model, system, tools, self.view(), messages[cut],
+                                           before is not None, reply)
             try:
                 note, spent = self._ask_note(provider, req, cancel, spent)
             except TarjumanError as e:

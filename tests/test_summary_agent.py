@@ -114,9 +114,10 @@ def test_in_place_resends_the_conversation_as_last_sent(tmp_path):
     a.turn("next")
     a.compact()
     last, asked = a.provider.requests[0], a.provider.requests[1]
-    cut = a.log.summary().cut
-    assert asked[:cut + 1] == last[:cut + 1]                   # the same start: the cache is reused
+    assert asked[:-2] == last                                   # the last request, as sent: cached
     assert asked[-1].role == "user" and "do not call any tool" in asked[-1].text
+    kept = a.log.messages()[a.log.summary().cut]
+    assert kept.text[:40] in asked[-1].text                     # where the verbatim part starts
     assert NOTE in a.log.summary().text
 
 
@@ -127,3 +128,9 @@ def test_in_place_falls_back_to_the_transcript(tmp_path):
     a.compact()
     assert "<transcript>" in a.provider.requests[1][0].text     # the second try
     assert a.log.summary().model_text == NOTE                  # the thinking before it is dropped
+
+
+def test_compact_takes_everything_it_may(tmp_path):
+    a, _ = make(tmp_path, [reply(NOTE)], exchanges=2, size=100)   # a short session, far from full
+    a.compact()
+    assert a.log.summary().cut == len(a.log.messages()) - 1     # all but the model's last message

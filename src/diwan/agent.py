@@ -190,7 +190,7 @@ class Agent:
         if self.limits.summaries and use.usable and summary.due(use.used, use.usable):
             self._summarize()
 
-    def _summarize(self) -> bool:
+    def _summarize(self, everything: bool = False) -> bool:
         """One summary, shown as a notice. A failed summary is logged and the turn goes on
         unsummarized; an interrupt stops the turn as usual. True when a summary was logged."""
         before = self.context_use.used
@@ -198,7 +198,7 @@ class Agent:
             in_place = (self.system, [t.definition for t in self.tools.values()]) \
                 if self.limits.in_place else None
             r = self.context_manager.summarize(self.context_use, self.provider, self.model,
-                                               self._cancel, in_place)
+                                               self._cancel, in_place, everything)
         except TarjumanError as e:
             if e.code == errors.CANCELLED:
                 raise Interrupted from None
@@ -216,11 +216,12 @@ class Agent:
         return True
 
     def compact(self) -> None:
-        """Summarize now (/compact), between turns."""
+        """Summarize now (/compact), between turns: everything the cut may take, keeping only
+        the model's latest message onward."""
         self._cancel = Cancel()
         self._context_changed()
         try:
-            self._summarize()
+            self._summarize(everything=True)
         except STOPS:
             self.on(ContextSummarized("summary stopped"))
 
