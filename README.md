@@ -8,8 +8,8 @@ speaks every model's language. Built from the loop up: no framework underneath.
 > collected works. The word crossed Persian, Arabic, Turkish, Italian (*dogana*),
 > Spanish (*aduana*) and French (*douane*).
 
-**Status:** v0 works: a terminal coding agent with eight tools (read, grep, glob, write,
-edit, bash, note, recall), approvals, retries, long sessions that never run out of context,
+**Status:** v0 works: a terminal coding agent with nine tools (read, grep, glob, write,
+edit, bash, note, recall, agent), approvals, retries, long sessions that never run out of context,
 and a tree-shaped JSONL log of every session in `~/.diwan/sessions/`.
 One conversation can move between models and providers mid-session
 (`/model anthropic:claude-sonnet-5-5`, then `/model openrouter:deepseek/deepseek-v4-flash`):
@@ -65,6 +65,15 @@ rather than answer from memory. In an early test without `recall`, DeepSeek inve
 retryable error codes after a summary; with it, it found them in the log.
 
 Background reading and the decision: [docs/research-context.md](docs/research-context.md).
+
+## Child agents
+
+The `agent` tool hands a self-contained task to a fresh agent: an empty context with only
+the task, the same model, the same approvals, no `agent` tool of its own (one level deep),
+and read-only tools when asked. It keeps its own session log; the parent gets back only its
+final answer, so a long search costs the parent's context a few lines. Its steps show under
+the call (and in the agents panel, Ctrl+B), its cost counts in the turn, and Esc stops it
+with the parent.
 
 ## Layout
 
