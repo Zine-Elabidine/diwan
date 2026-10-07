@@ -67,6 +67,8 @@ def summarize_call(call: ToolCall) -> str:
         return f"{a.get('kind', '')}: {_first_line(str(a.get('text', '')))}"
     if call.name == "recall":
         return repr(a.get("query", ""))
+    if call.name == "memory":
+        return f"{a.get('type', '')}: {a.get('name', '')}"
     if call.name == "agent":
         return ("(read-only) " if a.get("readonly") else "") + _first_line(str(a.get("task", "")), 80)
     if call.name == "read" and a.get("offset"):

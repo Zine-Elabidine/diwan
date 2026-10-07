@@ -65,7 +65,7 @@ def access(tool: Tool, args: dict[str, Any], policy: PathPolicy) -> Access:
     """What a call needs: no question, the user's approval (outside the project), or refusal."""
     if tool.path_arg is None:
         return Access.INSIDE
-    return policy.check(str(args.get(tool.path_arg) or "."))
+    return policy.check(str(args.get(tool.path_arg) or "."), write=not tool.readonly)
 
 
 def clip(text: str) -> str:

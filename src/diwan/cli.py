@@ -12,7 +12,7 @@ from typing import TextIO
 from rich.text import Text
 from tarjuman import TarjumanError, Usage, errors, providers
 
-from . import __version__, commands, mcp
+from . import __version__, commands, mcp, memory
 from .agent import Agent, Limits
 from .log import Log
 from .models import Ref, Router
@@ -48,10 +48,13 @@ def load_env_file() -> None:
 def build_agent(ref: Ref, log: Log, term: Terminal, cwd: Path, router: Router,
                 limits: Limits | None = None) -> Agent:
     client = router.client(ref.provider)
-    paths = PathPolicy(cwd)
-    tools = {**default_tools(), **(mcp.current.tools if mcp.current else {})}
+    mem = memory.current
+    paths = PathPolicy(cwd, readable=mem.readable() if mem else None)
+    tools = {**default_tools(), **({"memory": memory.Remember()} if mem else {}),
+             **(mcp.current.tools if mcp.current else {})}
+    extra = memory.prompt_section(mem) if mem else ""
     return Agent(client, ref.model, log, tools,
-                 lambda provider, model: system_prompt(cwd, model, provider),
+                 lambda provider, model: system_prompt(cwd, model, provider) + extra,
                  approve=term.approve, on=term.on, limits=limits, paths=paths)
 
 
@@ -68,6 +71,15 @@ def start_mcp(out: TextIO) -> None:
     atexit.register(mcp.current.close)
     for name, why in mcp.current.errors.items():
         print(f"MCP server {name!r} didn't start: {why}", file=out)
+
+
+def start_memory(cwd: Path, out: TextIO) -> None:
+    """Load this project's memory through Telepathy, and save it back when Diwan exits."""
+    memory.current, message = memory.start(cwd)
+    if message:
+        print(message, file=out)
+    if memory.current is not None:
+        atexit.register(memory.end, cwd)
 
 
 def start_ref(args: argparse.Namespace, log: Log | None, router: Router) -> Ref:
@@ -109,6 +121,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="cap the context window (also used when a model's window is unknown)")
     ap.add_argument("--no-summaries", action="store_true",
                     help="never summarize the oldest messages automatically (/compact still works)")
+    ap.add_argument("--no-memory", action="store_true",
+                    help="don't load or save memory (Telepathy) in this session")
     ap.add_argument("--version", action="version", version=f"diwan {__version__}")
     args = ap.parse_args(argv)
     limits = Limits(context=args.context, summaries=not args.no_summaries)
@@ -124,6 +138,8 @@ def main(argv: list[str] | None = None) -> int:
         log = Log.load(Path(args.resume).expanduser())
 
     start_mcp(sys.stderr)
+    if not args.no_memory:
+        start_memory(cwd, sys.stderr)
     router = Router(args.provider or ("local" if args.base_url else "openrouter"), args.base_url)
     approvals = Approvals(auto=args.yes)
     term = Terminal(approvals=approvals, interactive=args.prompt is None,

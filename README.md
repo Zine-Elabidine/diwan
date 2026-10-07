@@ -9,7 +9,7 @@ speaks every model's language. Built from the loop up: no framework underneath.
 > Spanish (*aduana*) and French (*douane*).
 
 **Status:** v0 works: a terminal coding agent with nine tools (read, grep, glob, write,
-edit, bash, note, recall, agent), approvals, retries, long sessions that never run out of context,
+edit, bash, note, recall, agent) plus `memory` and MCP servers' tools, approvals, retries, long sessions that never run out of context,
 and a tree-shaped JSONL log of every session in `~/.diwan/sessions/`.
 One conversation can move between models and providers mid-session
 (`/model anthropic:claude-sonnet-5-5`, then `/model openrouter:deepseek/deepseek-v4-flash`):
@@ -32,7 +32,7 @@ diwan --no-summaries                # clear old tool outputs, but never summariz
 ```
 
 Inside a session: `/model [provider:]<id>` switches model, `/models [provider] [text]` lists
-the catalog with prices, `/compact [on|off]`, `/notes`, `/mcp`, `/cost`, `/think`, `/new`, `/help`.
+the catalog with prices, `/compact [on|off]`, `/notes`, `/memory`, `/mcp`, `/cost`, `/think`, `/new`, `/help`.
 Typing while the agent works queues the message: the model gets it after the current step
 (a turn about to end answers it first); Esc stops the turn instead.
 
@@ -83,6 +83,17 @@ Their tools appear as `mcp__<server>__<tool>`; every call asks for approval (ser
 aren't trusted), and Esc cancels a running call. A server that fails to start is reported and
 the session goes on; `/mcp` lists servers and tools. Only this user-level file is read: a
 project's file would let any cloned repository start programs.
+
+## Memory
+
+Memory across sessions and machines comes from [Telepathy](https://github.com/Zine-Elabidine/telepathy):
+memory bundles in a private git repo, chosen per project per machine (`tp use personal
+my-project`). At the start, Diwan runs `tp session start`: the memory index goes into the
+system prompt once (a frozen snapshot, so the prompt cache holds), and the bundle folders can
+be read without approval. The `memory` tool saves a new memory into the right bundle (user and
+feedback memories in the personal one, project and reference ones in the project's). At exit,
+`tp session end` indexes, commits and pushes them. Without `tp`, or with `--no-memory`, there
+is no memory; `/memory` shows what is loaded.
 
 ## Child agents
 

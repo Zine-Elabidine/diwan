@@ -1,7 +1,8 @@
 """Where the file tools may reach.
 
-Inside the project: free. Outside it: the user approves first, even for reading. Places that
-hold credentials: refused, approval or not. `.env` files ask even inside the project.
+Inside the project: free. Outside it: the user approves first, even for reading, except in
+the places given as `readable` (the memory folders), which are free to read. Places that hold
+credentials: refused, approval or not. `.env` files ask even inside the project.
 
 This guards the file tools only. `bash` can still read anything the user can; its approval is
 the only guard there, and a sandbox for commands is a later step."""
@@ -24,8 +25,10 @@ class Access(Enum):
 
 
 class PathPolicy:
-    def __init__(self, project: Path, home: Path | None = None):
+    def __init__(self, project: Path, home: Path | None = None,
+                 readable: list[Path] | None = None):
         self.project = project.resolve()
+        self.readable = [p.resolve() for p in readable or []]
         home = (home or Path.home()).resolve()
         self.secrets = [home / p for p in SECRET_PLACES]
 
@@ -34,12 +37,14 @@ class PathPolicy:
         p = Path(path).expanduser()
         return (p if p.is_absolute() else self.project / p).resolve()
 
-    def check(self, path: str) -> Access:
+    def check(self, path: str, write: bool = True) -> Access:
         real = self.resolve(path)
         if self.secret(real):
             return Access.DENIED
         if env_file(real):
             return Access.ASK
+        if not write and any(real.is_relative_to(r) for r in self.readable):
+            return Access.INSIDE
         return Access.INSIDE if real.is_relative_to(self.project) else Access.ASK
 
     def secret(self, real: Path) -> bool:
