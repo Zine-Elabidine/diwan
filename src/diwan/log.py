@@ -47,10 +47,12 @@ class Event:
 @dataclass(frozen=True)
 class Summary:
     """A "summary" event: the first `cut` messages of the branch are sent as `text` instead.
-    `point` is how many messages the branch had when the summary was made."""
+    `point` is how many messages the branch had when the summary was made. `model_text` is
+    the model's part of `text`, the part the next summary updates."""
     cut: int
     text: str
     point: int
+    model_text: str
 
 
 @dataclass
@@ -69,7 +71,8 @@ class _Branch:
             self.masked.update(e.data["entries"])
             self.mask_points.append(len(self.messages))
         elif e.type == Kind.SUMMARY:
-            self.summary = Summary(e.data["cut"], e.data["text"], len(self.messages))
+            self.summary = Summary(e.data["cut"], e.data["text"], len(self.messages),
+                                   e.data.get("model_text", e.data["text"]))
         self.head = e.id
 
 

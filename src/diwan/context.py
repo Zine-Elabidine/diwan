@@ -11,9 +11,8 @@ from dataclasses import dataclass
 
 from tarjuman import Message, Provider, Tool, tokens
 
-from . import clearing
+from . import clearing, summary
 from .log import Kind, Log
-from .tools.notes import KINDS
 
 # another model's chars-per-token, reused for this one, assumes 15% more tokens (tokenizers differ;
 # measured: DeepSeek 3.08, Claude 2.68 on the same session)
@@ -59,18 +58,7 @@ class ContextManager:
     def notes(self) -> list[tuple[str, str]]:
         """The model's notes on this branch, oldest first, as (kind, text). Read from the log,
         not the view, so none is lost when older messages stop being sent."""
-        out = []
-        for m in self.log.messages():
-            for c in m.tool_calls:   # finished calls only: interrupted ones sit in `partial`
-                if c.name != "note":
-                    continue
-                try:
-                    a = c.args()
-                except ValueError:
-                    continue
-                if a.get("kind") in KINDS and str(a.get("text") or "").strip():
-                    out.append((a["kind"], str(a["text"]).strip()))
-        return out
+        return summary.notes(self.log.messages())
 
     def measure(self, system: str, tools: list[Tool], provider: Provider,
                 model: str) -> ContextUse:
