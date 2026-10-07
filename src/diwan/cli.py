@@ -196,6 +196,9 @@ def main(argv: list[str] | None = None) -> int:
             term.session = Usage()   # the footer's session total starts again, like /cost
         if reply.effect == "compact":
             session.agent.compact()
+        if reply.effect == "rewind":
+            c.print(Text(f"rewound to before: {reply.text}", style="dim"))
+            continue
         if reply.effect == "think":
             term.show_reasoning = not term.show_reasoning
             reply.text = f"reasoning {'shown' if term.show_reasoning else 'hidden'}"

@@ -57,5 +57,12 @@ class Session:
         self.agent = self.make_agent(self.log, self.ref)
         return self.log
 
+    def rewind(self, n: int = 1) -> str | None:
+        """Back to before the user's n-th last message (see Log.rewind); its text, or None."""
+        text = self.log.rewind(n)
+        if text is not None:
+            self.agent.context_use = self.agent.context()
+        return text
+
     def describe(self) -> str:
         return describe(self.ref)

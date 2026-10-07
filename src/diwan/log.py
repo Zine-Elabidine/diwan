@@ -33,6 +33,7 @@ class Kind(StrEnum):
     APPROVAL = "approval"          # the user's answer to a tool call
     ERROR = "error"                # a failed request or an internal error; never sent
     TURN_END = "turn_end"          # why a turn stopped, its steps and usage
+    REWIND = "rewind"              # the user went back: later events continue from its parent
 
 
 @dataclass
@@ -166,6 +167,20 @@ class Log:
     def summary(self) -> Summary | None:
         """The latest "summary" event on this branch, if any."""
         return self._branch().summary
+
+    def rewind(self, n: int = 1) -> str | None:
+        """Go back to just before the user's n-th last message, and return that message's text
+        (to edit and send again), or None if there aren't that many. Nothing is removed: a
+        "rewind" event starts a new branch there, and the old branch stays in the log."""
+        typed = [e for e in self.path_to_head()
+                 if e.type == Kind.MESSAGE and e.data.get("role") == "user"]
+        if n < 1 or n > len(typed):
+            return None
+        target = typed[-n]
+        old = self.head
+        self.head = target.parent
+        self.append(Kind.REWIND, {"from": old, "to": target.parent})
+        return Message.from_dict(target.data).text
 
     def current_model(self) -> tuple[str | None, str | None]:
         """(provider, model) in use at the head: the last switch on this branch, else the

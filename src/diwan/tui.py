@@ -343,6 +343,13 @@ class DiwanApp(App):
         elif reply.effect == "compact":
             self.running = True
             self.run_compact()
+        elif reply.effect == "rewind":
+            self.chat.remove_children()
+            self._tools.clear()
+            self._replay_history()
+            self.prompt.text = reply.text   # to edit and send again
+            self._update_top()
+            return
         if reply.effect in ("new", "model"):
             self._update_top()
             self._update_agents()

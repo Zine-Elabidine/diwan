@@ -15,7 +15,7 @@ from .models import listing
 from .present import fmt_notes, fmt_usage
 from .session import Session
 
-Effect = Literal["exit", "think", "new", "model", "compact"]
+Effect = Literal["exit", "think", "new", "model", "compact", "rewind"]
 
 
 @dataclass
@@ -51,6 +51,16 @@ def _compact(s: Session, rest: str) -> Reply:
     return Reply(effect="compact")   # the front-end runs it, off its UI thread
 
 
+def _rewind(s: Session, rest: str) -> Reply:
+    if rest and not rest.isdigit():
+        return Reply("usage: /rewind [n]", "error")
+    text = s.rewind(int(rest or 1))
+    if text is None:
+        return Reply("nothing to go back to", "error")
+    # the front-end redraws and puts the message back in the input to edit
+    return Reply(text, effect="rewind")
+
+
 def _new(s: Session, rest: str) -> Reply:
     log = s.new()
     return Reply(f"new session {log.id}", effect="new")
@@ -74,6 +84,8 @@ COMMANDS = [
             lambda s, rest: Reply(mcp.describe(mcp.current), "block")),
     Command("cost", "", "tokens and cost for this session",
             lambda s, rest: Reply(fmt_usage(s.agent.total))),
+    Command("rewind", "[n]", "go back to before your last message (or the n-th last) to edit "
+            "it; the log keeps the old branch", _rewind, busy_ok=lambda rest: False),
     Command("new", "", "start a new session", _new, busy_ok=lambda rest: False),
     Command("exit", "", "quit", lambda s, rest: Reply(effect="exit"), aliases=("quit",)),
     Command("help", "", "this list", lambda s, rest: Reply(help_text(), "block")),
