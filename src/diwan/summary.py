@@ -9,7 +9,7 @@ can't be paraphrased away or copied twice."""
 
 from __future__ import annotations
 
-from tarjuman import Message, Request, tokens
+from tarjuman import Message, Request, Tool, tokens
 
 from . import clearing
 from .tools.notes import KINDS
@@ -20,7 +20,7 @@ TARGET = 0.40           # and cut so the request lands about here afterwards
 
 # shares of the effective window
 REPLY = 0.05            # the summarizer's answer (max_tokens)...
-REPLY_MAX = 8_000       # ...but no more than this
+REPLY_MIN, REPLY_MAX = 2_000, 8_000   # ...within these bounds (a full note is ~500-1,500)
 USER_TEXT = 0.05        # the user's own messages, newest kept
 NOTES_TEXT = 0.03       # the notes, newest kept
 # one message or tool output in the transcript, in characters: a fair share of the room, within
@@ -32,10 +32,7 @@ HEADER = ("This conversation was summarized to save context. The full session lo
           "line or error from earlier, read the file or run the command again instead of "
           "answering from memory.")
 
-PROMPT = """You are writing a handoff note for an AI coding agent that will continue this \
-session with no other memory of it. Below is {what}. Write the note in these sections:
-
-## Goal
+SECTIONS = """## Goal
 ## Constraints and preferences
 ## Done
 ## In progress
@@ -45,7 +42,12 @@ session with no other memory of it. Below is {what}. Write the note in these sec
 ## Critical context
 
 Keep exact file paths, function names, commands and error messages. Leave out anything the \
-agent can find again by reading the files. No preamble: start with "## Goal".
+agent can find again by reading the files. No preamble: start with "## Goal"."""
+
+PROMPT = """You are writing a handoff note for an AI coding agent that will continue this \
+session with no other memory of it. Below is {what}. Write the note in these sections:
+
+""" + SECTIONS + """
 {previous}
 <transcript>
 {transcript}
@@ -63,7 +65,8 @@ def due(used: int, usable: int) -> bool:
 
 
 def reply_tokens(usable: int) -> int:
-    return min(int(effective(usable) * REPLY), REPLY_MAX)
+    share = min(max(int(effective(usable) * REPLY), REPLY_MIN), REPLY_MAX)
+    return min(share, usable // 4)   # on a tiny window the note still leaves room to send
 
 
 def tail_budget(usable: int) -> int:
@@ -151,6 +154,33 @@ def request(model: str, previous: str | None, text: str, max_tokens: int) -> Req
         prev = ""
     body = PROMPT.format(what=what, previous=prev, transcript=text)
     return Request(model, [Message.user(body)], None, max_tokens=max_tokens, reasoning="off")
+
+
+# the other way, as Codex and Claude Code do it: the conversation is sent again exactly as the
+# model saw it (same system prompt, tools and messages, so the provider's prompt cache is reused
+# and nothing is shortened), with this request added at the end
+IN_PLACE = """Stop working on the task for a moment and do not call any tool. Write a handoff \
+note for an AI coding agent that will continue this session with no other memory of it, \
+covering the conversation above{previous}. Write it in these sections:
+
+""" + SECTIONS
+
+
+def note_text(text: str) -> str:
+    """The note from the summarizer's reply: from "## Goal" on. A model that thinks out loud
+    first (seen with DeepSeek when the request comes at the end of the real conversation) puts
+    that before it. Empty when there is no note."""
+    start = text.find("## Goal")
+    return text[start:].strip() if start >= 0 else ""
+
+
+def in_place_request(model: str, system: str, tools: list[Tool], sent: list[Message],
+                     updates: bool, max_tokens: int) -> Request:
+    """The summarizer's request in place: `sent` is the start of the view, as last sent."""
+    previous = (" (its first message is the previous note: update it and keep what still holds)"
+                if updates else "")
+    ask = Message.user(IN_PLACE.format(previous=previous))
+    return Request(model, [Message.system(system), *sent, ask], tools, max_tokens=max_tokens)
 
 
 def user_messages(messages: list[Message], chars: int) -> list[str]:

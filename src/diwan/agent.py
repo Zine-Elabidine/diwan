@@ -40,6 +40,8 @@ class Limits:
     max_retries: int = 4
     context: int | None = None   # cap on the context window (also used when it is unknown)
     summaries: bool = True       # summarize the oldest messages automatically when the context fills
+    in_place: bool = True        # summarize by resending the conversation as is (summary.IN_PLACE);
+                                 # False: a plain-text transcript, also the fallback
 
 
 class Agent:
@@ -162,8 +164,10 @@ class Agent:
         unsummarized; an interrupt stops the turn as usual. True when a summary was logged."""
         before = self.context_use.used
         try:
+            in_place = (self.system, [t.definition for t in self.tools.values()]) \
+                if self.limits.in_place else None
             r = self.context_manager.summarize(self.context_use, self.provider, self.model,
-                                               self._cancel)
+                                               self._cancel, in_place)
         except TarjumanError as e:
             if e.code == errors.CANCELLED:
                 raise Interrupted from None

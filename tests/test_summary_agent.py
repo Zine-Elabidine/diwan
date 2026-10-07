@@ -21,7 +21,9 @@ def reply(text, **kw):
 
 
 def make(tmp_path, script, exchanges=8, size=12_000, **limits):
-    """A session of long user messages (clearing can't shrink them): ~89% of 36k usable."""
+    """A session of long user messages (clearing can't shrink them): ~89% of 36k usable.
+    Summaries go through the transcript unless a test asks for in_place."""
+    limits.setdefault("in_place", False)
     log = Log.new(cwd=str(tmp_path))
     for i in range(exchanges):
         log.add_message(Message.user(f"part {i}: " + "x" * size))
@@ -105,3 +107,23 @@ def test_compact_with_nothing_to_summarize_says_so(tmp_path):
     a, events = make(tmp_path, [], exchanges=0)
     a.compact()
     assert notices(events) == ["nothing to summarize yet"] and not a.provider.requests
+
+
+def test_in_place_resends_the_conversation_as_last_sent(tmp_path):
+    a, _ = make(tmp_path, [reply("done"), reply(NOTE)], exchanges=4, in_place=True)
+    a.turn("next")
+    a.compact()
+    last, asked = a.provider.requests[0], a.provider.requests[1]
+    cut = a.log.summary().cut
+    assert asked[:cut + 1] == last[:cut + 1]                   # the same start: the cache is reused
+    assert asked[-1].role == "user" and "do not call any tool" in asked[-1].text
+    assert NOTE in a.log.summary().text
+
+
+def test_in_place_falls_back_to_the_transcript(tmp_path):
+    thinking = reply("I should answer the question first... no, write the note.\n" + NOTE)
+    a, _ = make(tmp_path, [reply("## Goal\nwri", stop="max_tokens"), thinking],
+                exchanges=4, in_place=True)
+    a.compact()
+    assert "<transcript>" in a.provider.requests[1][0].text     # the second try
+    assert a.log.summary().model_text == NOTE                  # the thinking before it is dropped

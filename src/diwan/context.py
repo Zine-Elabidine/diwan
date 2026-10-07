@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from tarjuman import Cancel, Message, Provider, TarjumanError, Tool, Usage, errors, tokens
+from tarjuman import Cancel, Message, Provider, Request, TarjumanError, Tool, Usage, errors, tokens
 
 from . import clearing, summary
 from .log import Kind, Log
@@ -123,10 +123,13 @@ class ContextManager:
         return p
 
     def summarize(self, use: ContextUse, provider: Provider, model: str,
-                  cancel: Cancel | None = None) -> Summarized | None:
+                  cancel: Cancel | None = None, in_place: tuple[str, list[Tool]] | None = None
+                  ) -> Summarized | None:
         """Replace the oldest messages with a summary: ask the model for its handoff note, then
         log a "summary" event (logged only once the note is in). None when the cut can't move
-        forward. Raises TarjumanError when the request fails; nothing is logged then."""
+        forward. Raises TarjumanError when the request fails; nothing is logged then.
+        in_place: (system prompt, tools) to send the conversation again as is and ask for the
+        note at the end, instead of a plain-text transcript (summary.IN_PLACE)."""
         if not use.usable:
             return None
         before = self.log.summary()
@@ -138,19 +141,43 @@ class ContextManager:
             return None
         reply = summary.reply_tokens(use.usable)
         previous = before.model_text if before else None
-        # the summarizer's request must fit: long items share the room, and if even their
-        # shortest form is too long, the middle of the transcript goes
-        room = max(int((use.usable - reply - 1_000) * ratio) - len(previous or ""), 1_000)
-        text = summary.cut_middle(summary.transcript(messages[after:cut], masked, room), room)
-        msg = provider.complete(summary.request(model, previous, text, reply), cancel=cancel)
-        note = msg.text.strip()
+        spent = Usage()
+        note = None
+        if in_place:
+            # the conversation as last sent (the cache is reused), up to log message `cut`
+            system, tools = in_place
+            sent = self.view()[:cut - after + (1 if before else 0)]
+            req = summary.in_place_request(model, system, tools, sent, before is not None, reply)
+            try:
+                note, spent = self._ask_note(provider, req, cancel, spent)
+            except TarjumanError as e:
+                if e.code == errors.CANCELLED:
+                    raise
+                # too long, cut off, or no note: the transcript below is the fallback
+        if note is None:
+            # the summarizer's request must fit: long items share the room, and if even their
+            # shortest form is too long, the middle of the transcript goes
+            room = max(int((use.usable - reply - 1_000) * ratio) - len(previous or ""), 1_000)
+            text = summary.cut_middle(summary.transcript(messages[after:cut], masked, room), room)
+            note, spent = self._ask_note(provider, summary.request(model, previous, text, reply),
+                                         cancel, spent)
+        final = summary.final_text(note, messages[:cut], use.usable, ratio)
+        self.log.append(Kind.SUMMARY, {"cut": cut, "text": final, "model_text": note,
+                                       "usage": spent.__dict__})
+        return Summarized(cut - after, spent)
+
+    @staticmethod
+    def _ask_note(provider: Provider, req: Request, cancel: Cancel | None,
+                  spent: Usage) -> tuple[str, Usage]:
+        """The note from one summarizer request, and the usage so far (a failed attempt costs
+        too). Raises TarjumanError when the request fails or the note is cut off or missing."""
+        msg = provider.complete(req, cancel=cancel)
+        spent = spent + (msg.usage or Usage())
+        note = summary.note_text(msg.text)
         if msg.stop != "end" or not note:
             raise TarjumanError(errors.SERVER_ERROR,
                                 f"the summary came back incomplete (stop: {msg.stop})")
-        final = summary.final_text(note, messages[:cut], use.usable, ratio)
-        self.log.append(Kind.SUMMARY, {"cut": cut, "text": final, "model_text": note,
-                                       "usage": (msg.usage or Usage()).__dict__})
-        return Summarized(cut - after, msg.usage or Usage())
+        return note, spent
 
 
 @dataclass
