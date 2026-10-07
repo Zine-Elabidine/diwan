@@ -33,6 +33,8 @@ diwan --no-summaries                # clear old tool outputs, but never summariz
 
 Inside a session: `/model [provider:]<id>` switches model, `/models [provider] [text]` lists
 the catalog with prices, `/compact [on|off]`, `/notes`, `/cost`, `/think`, `/new`, `/help`.
+Typing while the agent works queues the message: the model gets it after the current step
+(a turn about to end answers it first); Esc stops the turn instead.
 
 ## Long sessions
 

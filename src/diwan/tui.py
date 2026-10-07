@@ -24,7 +24,7 @@ from textual.widgets import Button, Collapsible, Markdown, Static, TextArea, Tre
 from . import __version__, commands
 from .agent import Agent
 from .events import (ContextCleared, ContextSummarized, Retrying, StateChanged, ToolFinished,
-                     ToolStarted, TurnEnded, UIEvent)
+                     ToolStarted, TurnEnded, UIEvent, UserAdded)
 from .log import Log
 from .models import Ref, Router
 from .present import (fmt_context, fmt_cost, fmt_tokens, fmt_usage, preview, short,
@@ -319,7 +319,8 @@ class DiwanApp(App):
             self.command(text)
             return
         if self.running:
-            self.notify("The agent is working. Esc stops it.", severity="warning")
+            self.agent.send(text)   # shown when the model gets it, at the next step
+            self.notify("Queued: the model gets it after the current step. Esc stops it instead.")
             return
         self.chat.mount(UserMsg(RText(text)))
         self.chat.scroll_end(animate=False)
@@ -363,6 +364,13 @@ class DiwanApp(App):
             self.call_from_thread(self._turn_done)
 
     def _turn_done(self) -> None:
+        left = self.agent.take_inbox()   # typed too late for the turn (or after Esc): the next one
+        if left and self.is_running:
+            text = "\n\n".join(left)
+            self.chat.mount(UserMsg(RText(text)))
+            self.chat.scroll_end(animate=False)
+            self.run_turn(text)
+            return
         self.running = False
         self.prompt.focus()
 
@@ -452,6 +460,9 @@ class DiwanApp(App):
             await self._add(Static(f"↺ {ev.text}; the log keeps them", classes="notice"))
         elif isinstance(ev, ContextSummarized):
             await self._add(Static(f"↺ {ev.text}", classes="notice"))
+        elif isinstance(ev, UserAdded):
+            await self._close_block()
+            await self._add(UserMsg(RText(ev.text)))
         elif isinstance(ev, Retrying):
             await self._add(Static(f"{ev.error.code}, retrying in {ev.wait:.0f}s "
                                    f"(attempt {ev.attempt})", classes="notice"))

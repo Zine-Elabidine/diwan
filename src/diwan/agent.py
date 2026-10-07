@@ -3,6 +3,7 @@ plus the tools it asked for. Every step, tool result, retry and ending is logged
 
 from __future__ import annotations
 
+import threading
 import traceback
 from collections.abc import Callable
 from pathlib import Path
@@ -16,7 +17,7 @@ from tarjuman import (BlockEnd, BlockStart, Cancel, Event, Finish, Message, Prov
 from . import clearing, summary
 from .context import ContextManager, ContextUse
 from .events import (ContextChanged, ContextCleared, ContextSummarized, Reason, Retrying,
-                     StateChanged, ToolFinished, ToolStarted, TurnEnded, UIEvent)
+                     StateChanged, ToolFinished, ToolStarted, TurnEnded, UIEvent, UserAdded)
 from .log import Kind, Log
 from .paths import Access, PathPolicy
 from .tools import Tool, ToolContext, ToolError, access
@@ -61,6 +62,8 @@ class Agent:
         self.paths = paths or PathPolicy(Path(log.events[0].data.get("cwd") or "."))
         self.total = Usage()
         self._cancel = Cancel()
+        self._inbox: list[str] = []   # typed while a turn runs: given to the model at the next step
+        self._inbox_lock = threading.Lock()
         self.context_manager = ContextManager(log, self.limits.max_tokens, self.limits.context)
         self.context_use = self.context()
 
@@ -110,6 +113,26 @@ class Agent:
         so far is kept."""
         self._cancel.cancel()
 
+    def send(self, text: str) -> None:
+        """A message typed while a turn runs (safe from any thread). The model gets it at the
+        next step, after the tools it asked for; a turn about to end goes on to answer it."""
+        with self._inbox_lock:
+            self._inbox.append(text)
+
+    def take_inbox(self) -> list[str]:
+        """The messages not given to the model yet (after a turn ends: they start the next)."""
+        with self._inbox_lock:
+            taken, self._inbox = self._inbox, []
+        return taken
+
+    def _deliver(self) -> bool:
+        """Add the waiting messages to the conversation. True if there were any."""
+        texts = self.take_inbox()
+        for text in texts:
+            self.log.add_message(Message.user(text))
+            self.on(UserAdded(text))
+        return bool(texts)
+
     def _check_stop(self) -> None:
         if self._cancel.cancelled:
             raise Interrupted
@@ -123,6 +146,8 @@ class Agent:
                 self._check_stop()
                 if steps >= self.limits.max_steps:
                     return self._end("max_steps", steps, usage)
+                if steps:
+                    self._deliver()
                 steps += 1
                 msg = self._sample()
                 usage += msg.usage or Usage()
@@ -131,7 +156,11 @@ class Agent:
                 if msg.stop == "max_tokens":
                     return self._end("max_tokens", steps, usage)
                 if not msg.tool_calls:
-                    return self._end("done", steps, usage)
+                    with self._inbox_lock:
+                        waiting = bool(self._inbox)
+                    if not waiting:
+                        return self._end("done", steps, usage)
+                    continue   # the user wrote meanwhile: answer that before ending
                 self._run_tools(msg.tool_calls)
         except STOPS:
             # its own event, rendered as a reminder when the history is sent (never an edit)

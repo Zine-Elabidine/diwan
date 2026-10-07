@@ -106,3 +106,23 @@ async def test_quitting_during_an_approval_lets_the_agent_thread_end(tmp_path):
         time.sleep(0.05)
     assert not _waiting_on_an_approval()             # the agent thread was released
     assert not (tmp_path / "a.txt").exists()         # and the pending write was refused
+
+
+@pytest.mark.asyncio
+async def test_typing_while_the_agent_works_queues_the_message(tmp_path):
+    script = [Message("assistant", [ToolCall("c1", "bash", json.dumps({"command": "echo hi"}))]),
+              Message("assistant", [Text("done, and checked the tests too")])]
+    app = make_app(tmp_path, script)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.click("#prompt")
+        await pilot.press(*"run it", "enter")
+        for _ in range(50):
+            await pilot.pause(0.05)
+            if isinstance(app.screen, Approval):
+                break
+        app.submit("also check the tests")          # typed while the agent waits on a tool
+        await pilot.press("y")
+        await wait_idle(pilot, app)
+        assert len(app.query(UserMsg)) == 2
+    texts = [(m.role, m.text) for m in app.session_log.messages()]
+    assert texts[3] == ("user", "also check the tests") and texts[4][0] == "assistant"

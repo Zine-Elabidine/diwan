@@ -55,6 +55,12 @@ class ContextSummarized:
 
 
 @dataclass
+class UserAdded:
+    """A message the user typed while the agent worked, now given to the model."""
+    text: str
+
+
+@dataclass
 class TurnEnded:
     reason: Reason
     steps: int
@@ -62,5 +68,5 @@ class TurnEnded:
     error: str | None = None
 
 
-UIEvent = (StateChanged | ToolStarted | ToolFinished | Retrying | TurnEnded | ContextChanged
-           | ContextCleared | ContextSummarized | Event)
+UIEvent = (StateChanged | ToolStarted | ToolFinished | Retrying | UserAdded | TurnEnded
+           | ContextChanged | ContextCleared | ContextSummarized | Event)
