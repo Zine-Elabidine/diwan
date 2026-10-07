@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import os
 import sys
 from pathlib import Path
+from typing import TextIO
 
 from rich.text import Text
 from tarjuman import TarjumanError, Usage, errors, providers
 
-from . import __version__, commands
+from . import __version__, commands, mcp
 from .agent import Agent, Limits
 from .log import Log
 from .models import Ref, Router
@@ -47,9 +49,25 @@ def build_agent(ref: Ref, log: Log, term: Terminal, cwd: Path, router: Router,
                 limits: Limits | None = None) -> Agent:
     client = router.client(ref.provider)
     paths = PathPolicy(cwd)
-    return Agent(client, ref.model, log, default_tools(),
+    tools = {**default_tools(), **(mcp.current.tools if mcp.current else {})}
+    return Agent(client, ref.model, log, tools,
                  lambda provider, model: system_prompt(cwd, model, provider),
                  approve=term.approve, on=term.on, limits=limits, paths=paths)
+
+
+def start_mcp(out: TextIO) -> None:
+    """Start the servers in ~/.diwan/mcp.json; problems are printed, never fatal."""
+    try:
+        config = mcp.load_config()
+    except mcp.MCPError as e:
+        print(f"MCP: {e}", file=out)
+        return
+    if not config:
+        return
+    mcp.current = mcp.connect(config)
+    atexit.register(mcp.current.close)
+    for name, why in mcp.current.errors.items():
+        print(f"MCP server {name!r} didn't start: {why}", file=out)
 
 
 def start_ref(args: argparse.Namespace, log: Log | None, router: Router) -> Ref:
@@ -105,6 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.resume:
         log = Log.load(Path(args.resume).expanduser())
 
+    start_mcp(sys.stderr)
     router = Router(args.provider or ("local" if args.base_url else "openrouter"), args.base_url)
     approvals = Approvals(auto=args.yes)
     term = Terminal(approvals=approvals, interactive=args.prompt is None,

@@ -32,7 +32,7 @@ diwan --no-summaries                # clear old tool outputs, but never summariz
 ```
 
 Inside a session: `/model [provider:]<id>` switches model, `/models [provider] [text]` lists
-the catalog with prices, `/compact [on|off]`, `/notes`, `/cost`, `/think`, `/new`, `/help`.
+the catalog with prices, `/compact [on|off]`, `/notes`, `/mcp`, `/cost`, `/think`, `/new`, `/help`.
 Typing while the agent works queues the message: the model gets it after the current step
 (a turn about to end answers it first); Esc stops the turn instead.
 
@@ -65,6 +65,24 @@ rather than answer from memory. In an early test without `recall`, DeepSeek inve
 retryable error codes after a summary; with it, it found them in the log.
 
 Background reading and the decision: [docs/research-context.md](docs/research-context.md).
+
+## MCP servers
+
+Tools from other programs, through a small client of Diwan's own (JSON-RPC over a child
+process's stdin/stdout, or streamable HTTP). List servers in `~/.diwan/mcp.json`, in the
+format other agents use:
+
+```json
+{"mcpServers": {
+  "time": {"command": "uvx", "args": ["mcp-server-time"]},
+  "docs": {"url": "https://example.com/mcp", "headers": {"Authorization": "Bearer ..."}}
+}}
+```
+
+Their tools appear as `mcp__<server>__<tool>`; every call asks for approval (server hints
+aren't trusted), and Esc cancels a running call. A server that fails to start is reported and
+the session goes on; `/mcp` lists servers and tools. Only this user-level file is read: a
+project's file would let any cloned repository start programs.
 
 ## Child agents
 

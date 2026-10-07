@@ -3,6 +3,7 @@ one-line summaries of tool calls, previews of file changes, how a turn ended."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from tarjuman import ToolCall, Usage
@@ -70,7 +71,10 @@ def summarize_call(call: ToolCall) -> str:
         return ("(read-only) " if a.get("readonly") else "") + _first_line(str(a.get("task", "")), 80)
     if call.name == "read" and a.get("offset"):
         return f"{short(a.get('path', ''))}:{a['offset']}"
-    return short(str(a.get("path", "")))
+    if "path" in a or call.name in ("read", "write", "edit"):
+        return short(str(a.get("path", "")))
+    # any other tool (an MCP server's): its arguments
+    return short(" ".join(f"{k}={v if isinstance(v, str) else json.dumps(v)}" for k, v in a.items()))
 
 
 def child_line(ev: ChildEvent) -> str | None:

@@ -10,6 +10,7 @@ from typing import Literal
 
 from tarjuman import TarjumanError
 
+from . import mcp
 from .models import listing
 from .present import fmt_notes, fmt_usage
 from .session import Session
@@ -67,6 +68,8 @@ COMMANDS = [
             lambda s, rest: Reply(fmt_notes(s.agent.context_manager.notes()), "block")),
     Command("compact", "[on|off]", "summarize the oldest messages now; on/off: automatic "
             "summaries when the context fills", _compact, busy_ok=lambda rest: rest in ("on", "off")),
+    Command("mcp", "", "MCP servers and their tools (from ~/.diwan/mcp.json)",
+            lambda s, rest: Reply(mcp.describe(mcp.current), "block")),
     Command("cost", "", "tokens and cost for this session",
             lambda s, rest: Reply(fmt_usage(s.agent.total))),
     Command("new", "", "start a new session", _new, busy_ok=lambda rest: False),

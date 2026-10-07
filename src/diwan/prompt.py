@@ -26,6 +26,9 @@ are, so they are how you remember what you decided. When you need an exact detai
 (a value, a line, an error) that is no longer in front of you, search for it with `recall`
 instead of answering from memory.
 
+Tools named mcp__<server>__<tool> come from MCP servers the user added; each call asks the
+user first.
+
 For a self-contained part of the work whose steps you don't need to see (searching a large
 codebase, answering a question about it), use `agent`: a fresh agent does it and you get only
 its answer, which keeps your context small. It knows only what you put in `task`.
