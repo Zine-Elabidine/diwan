@@ -7,6 +7,7 @@ import threading
 import traceback
 from collections.abc import Callable
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -26,6 +27,8 @@ class Interrupted(BaseException):
     """The user stopped the turn (Agent.interrupt). A BaseException, like KeyboardInterrupt, so
     no `except Exception` on the way (a tool, a provider, a UI callback) can swallow it."""
 
+
+MAX_PARALLEL = 8   # tool calls run at the same time (see _run_tools)
 
 # what stops a turn: our own signal, or a real Ctrl+C in plain mode
 STOPS = (Interrupted, KeyboardInterrupt)
@@ -63,6 +66,7 @@ class Agent:
         self.total = Usage()
         self._cancel = Cancel()
         self._children_usage = Usage()   # what child agents spent during the running turn
+        self._lock = threading.Lock()
         self._inbox: list[str] = []   # typed while a turn runs: given to the model at the next step
         self._inbox_lock = threading.Lock()
         self.context_manager = ContextManager(log, self.limits.max_tokens, self.limits.context)
@@ -297,16 +301,41 @@ class Agent:
                 partial=cut or None))
 
     def _run_tools(self, calls: list[ToolCall]) -> None:
+        """Run the calls in their order, except that neighbouring calls that need no approval
+        and change nothing (reads, searches, read-only child agents) run at the same time.
+        Results keep the calls' order either way."""
         results: list[ToolResult] = []
         try:
-            for call in calls:
+            i = 0
+            while i < len(calls):
                 self._check_stop()
-                results.append(self._run_one(call))
+                j = i
+                while j < len(calls) and self._parallel_ok(calls[j]):
+                    j += 1
+                if j - i > 1:
+                    with ThreadPoolExecutor(min(j - i, MAX_PARALLEL)) as pool:
+                        results += pool.map(self._run_one, calls[i:j])
+                    i = j
+                else:
+                    results.append(self._run_one(calls[i]))
+                    i += 1
         finally:
             # results already produced are always saved, even on interrupt;
             # unanswered calls get a synthetic error when the history is sent
             if results:
                 self.log.add_message(Message("tool", [*results]))
+
+    def _parallel_ok(self, call: ToolCall) -> bool:
+        """Whether a call may run alongside others: read-only, inside what's allowed without
+        asking, and (for a child agent) a read-only one, which never asks either."""
+        tool = self.tools.get(call.name)
+        try:
+            args = call.args()
+        except ValueError:
+            return False
+        if tool is None or not tool.readonly or access(tool, args, self.paths) is not Access.INSIDE:
+            return False
+        return call.name != "agent" or args.get("readonly") is True
 
     def _run_one(self, call: ToolCall) -> ToolResult:
         tool = self.tools.get(call.name)
@@ -367,7 +396,8 @@ class Agent:
                       approve=self.approve, on=forward, limits=self.limits, sleep=self.sleep,
                       paths=self.paths)
         ended = child.turn(task, cancel=self._cancel)   # its end reaches the UI through `forward`
-        self._children_usage += child.total             # counted in this turn's usage
+        with self._lock:                                 # children may run side by side
+            self._children_usage += child.total          # counted in this turn's usage
         self.on(StateChanged("running"))
         answer = next((m.text for m in reversed(log.messages())
                        if m.role == "assistant" and m.text.strip()), "")

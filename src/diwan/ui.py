@@ -3,6 +3,7 @@ lines, approvals, and a footer with tokens and cost."""
 
 from __future__ import annotations
 
+import threading
 import time
 
 from rich.console import Console, Group
@@ -38,6 +39,8 @@ class Terminal:
         self._buf = ""
         self._started = 0.0
         self._shown: str | None = None       # tool call already printed by the approval prompt
+        self._last: str | None = None        # the tool call whose line was printed last
+        self._lock = threading.RLock()       # calls run side by side report from several threads
 
     # --- live region ------------------------------------------------------------------------
 
@@ -74,6 +77,10 @@ class Terminal:
     # --- events -----------------------------------------------------------------------------
 
     def on(self, ev: UIEvent) -> None:
+        with self._lock:
+            self._on(ev)
+
+    def _on(self, ev: UIEvent) -> None:
         if isinstance(ev, StateChanged):
             if ev.state == "thinking":
                 self._flush()
@@ -98,6 +105,8 @@ class Terminal:
             if ev.call.id != self._shown:
                 self._tool_line(ev.call)
         elif isinstance(ev, ToolFinished):
+            if ev.call.id != self._last:   # another call printed in between: say whose this is
+                self._tool_line(ev.call)
             r = ev.result
             lines = r.text.splitlines() or [""]
             style = "red" if r.is_error else "dim"
@@ -109,6 +118,7 @@ class Terminal:
             line = child_line(ev)
             if line:
                 c.print(Text(f"    {line}", style="dim"))
+                self._last = None
         elif isinstance(ev, ContextChanged):
             self.context = ev.context
         elif isinstance(ev, ContextCleared):
@@ -141,6 +151,7 @@ class Terminal:
         line.append(call.name, style="bold")
         line.append(f"  {summarize_call(call)}")
         self.console.print(line)
+        self._last = call.id
 
     # --- approvals --------------------------------------------------------------------------
 

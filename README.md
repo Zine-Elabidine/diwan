@@ -105,6 +105,10 @@ final answer, so a long search costs the parent's context a few lines. Its steps
 the call (and in the agents panel, Ctrl+B), its cost counts in the turn, and Esc stops it
 with the parent.
 
+Calls the model makes together that need no approval and change nothing (reads, searches,
+read-only child agents) run at the same time, up to eight; anything that writes or asks
+waits its turn, and results keep the calls' order.
+
 ## Layout
 
 ```
