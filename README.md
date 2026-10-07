@@ -32,7 +32,7 @@ diwan --no-summaries                # clear old tool outputs, but never summariz
 ```
 
 Inside a session: `/model [provider:]<id>` switches model, `/models [provider] [text]` lists
-the catalog with prices, `/rewind [n]`, `/compact [on|off]`, `/notes`, `/memory`, `/mcp`, `/cost`, `/think`, `/new`, `/help`.
+the catalog with prices, `/rewind [n]`, `/compact [on|off]`, `/notes`, `/skills`, `/memory`, `/mcp`, `/cost`, `/think`, `/new`, `/help`.
 Typing while the agent works queues the message: the model gets it after the current step
 (a turn about to end answers it first); Esc stops the turn instead.
 
@@ -84,6 +84,14 @@ Their tools appear as `mcp__<server>__<tool>`; every call asks for approval (ser
 aren't trusted), and Esc cancels a running call. A server that fails to start is reported and
 the session goes on; `/mcp` lists servers and tools. Only this user-level file is read: a
 project's file would let any cloned repository start programs.
+
+## Skills
+
+A skill is a folder with a `SKILL.md` whose front matter has a `name` and a `description`,
+the format Claude Code uses, so existing skills work as they are. Diwan looks in
+`.diwan/skills` and `.claude/skills`, in the project and then the home folder. Only the names
+and descriptions go into the prompt; the model reads a skill's files (without asking) when a
+task matches it. `/skills` lists them.
 
 ## Memory
 

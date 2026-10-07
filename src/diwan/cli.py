@@ -12,7 +12,7 @@ from typing import TextIO
 from rich.text import Text
 from tarjuman import TarjumanError, Usage, errors, providers
 
-from . import __version__, commands, mcp, memory
+from . import __version__, commands, mcp, memory, skills
 from .agent import Agent, Limits
 from .log import Log
 from .models import Ref, Router
@@ -49,10 +49,11 @@ def build_agent(ref: Ref, log: Log, term: Terminal, cwd: Path, router: Router,
                 limits: Limits | None = None) -> Agent:
     client = router.client(ref.provider)
     mem = memory.current
-    paths = PathPolicy(cwd, readable=mem.readable() if mem else None)
+    paths = PathPolicy(cwd, readable=[*(mem.readable() if mem else []),
+                                      *skills.readable(skills.current)])
     tools = {**default_tools(), **({"memory": memory.Remember()} if mem else {}),
              **(mcp.current.tools if mcp.current else {})}
-    extra = memory.prompt_section(mem) if mem else ""
+    extra = skills.prompt_section(skills.current) + (memory.prompt_section(mem) if mem else "")
     return Agent(client, ref.model, log, tools,
                  lambda provider, model: system_prompt(cwd, model, provider) + extra,
                  approve=term.approve, on=term.on, limits=limits, paths=paths)
@@ -138,6 +139,7 @@ def main(argv: list[str] | None = None) -> int:
         log = Log.load(Path(args.resume).expanduser())
 
     start_mcp(sys.stderr)
+    skills.current = skills.find(cwd)
     if not args.no_memory:
         start_memory(cwd, sys.stderr)
     router = Router(args.provider or ("local" if args.base_url else "openrouter"), args.base_url)

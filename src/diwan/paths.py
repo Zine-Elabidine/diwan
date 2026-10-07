@@ -1,7 +1,7 @@
 """Where the file tools may reach.
 
 Inside the project: free. Outside it: the user approves first, even for reading, except in
-the places given as `readable` (the memory folders), which are free to read. Places that hold
+the places given as `readable` (memory and skill folders), which are free to read. Places that hold
 credentials: refused, approval or not. `.env` files ask even inside the project.
 
 This guards the file tools only. `bash` can still read anything the user can; its approval is
@@ -39,12 +39,12 @@ class PathPolicy:
 
     def check(self, path: str, write: bool = True) -> Access:
         real = self.resolve(path)
+        if not write and any(real.is_relative_to(r) for r in self.readable) and not env_file(real):
+            return Access.INSIDE   # given as readable, even inside ~/.diwan (skills)
         if self.secret(real):
             return Access.DENIED
         if env_file(real):
             return Access.ASK
-        if not write and any(real.is_relative_to(r) for r in self.readable):
-            return Access.INSIDE
         return Access.INSIDE if real.is_relative_to(self.project) else Access.ASK
 
     def secret(self, real: Path) -> bool:
