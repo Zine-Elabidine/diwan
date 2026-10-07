@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ..sandbox import Sandbox
 from .base import Tool, ToolContext, ToolError, clip, schema
 
 def find_shell() -> tuple[list[str], str]:
@@ -77,11 +78,17 @@ class Bash(Tool):
         "timeout": {"type": "integer", "description": "seconds (default 120)"}},
         ["command"])
 
-    def __init__(self) -> None:
+    def __init__(self, sandbox: Sandbox | None = None) -> None:
         self.shell, self.shell_name = find_shell()
+        self.sandbox = sandbox
+        self.auto = sandbox is not None   # confined, so it runs without asking
         self.description = (f"Run a shell command in the project directory with {self.shell_name}. "
                             "Use it to run tests, builds, git and programs; use grep, glob and read to "
                             "search and read files.")
+        if sandbox:
+            self.description += (" It runs in a sandbox: it can write only in the project, /tmp "
+                                 "and ~/.cache, credentials are hidden" + (
+                                     "" if sandbox.network else ", and there is no network") + ".")
 
     def run(self, ctx: ToolContext, command: str, timeout: int = 120) -> str:
         flag = "-Command" if self.shell_name == "PowerShell" else "-c"
@@ -90,7 +97,10 @@ class Bash(Tool):
         # command that waits for input fails instead of hanging (or reading the user's keys)
         group: dict[str, Any] = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
                                  if os.name == "nt" else {"start_new_session": True})
-        p = subprocess.Popen([*self.shell, flag, command], cwd=ctx.cwd, stdin=subprocess.DEVNULL,
+        argv = [*self.shell, flag, command]
+        if self.sandbox:
+            argv = self.sandbox.wrap(argv)
+        p = subprocess.Popen(argv, cwd=ctx.cwd, stdin=subprocess.DEVNULL,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                              encoding="utf-8", errors="replace", **group)
         stopped = None

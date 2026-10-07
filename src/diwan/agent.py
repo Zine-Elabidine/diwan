@@ -358,7 +358,7 @@ class Agent:
             result = ToolResult(call.id, self.paths.why(str(args.get(tool.path_arg or ""))), True)
             self.on(ToolFinished(call, result))
             return result
-        if not tool.readonly or needed is Access.ASK:
+        if (not tool.readonly and not tool.auto) or needed is Access.ASK:
             self.on(StateChanged("waiting"))
             # `outside`: the call reaches beyond the project; "always" approvals don't cover it
             allowed = self.approve(call, tool, needed is Access.ASK)

@@ -12,7 +12,7 @@ from typing import TextIO
 from rich.text import Text
 from tarjuman import TarjumanError, Usage, errors, providers
 
-from . import __version__, commands, mcp, memory, skills
+from . import __version__, commands, mcp, memory, sandbox, skills
 from .agent import Agent, Limits
 from .log import Log
 from .models import Ref, Router
@@ -51,7 +51,7 @@ def build_agent(ref: Ref, log: Log, term: Terminal, cwd: Path, router: Router,
     mem = memory.current
     paths = PathPolicy(cwd, readable=[*(mem.readable() if mem else []),
                                       *skills.readable(skills.current)])
-    tools = {**default_tools(), **({"memory": memory.Remember()} if mem else {}),
+    tools = {**default_tools(sandbox.current), **({"memory": memory.Remember()} if mem else {}),
              **(mcp.current.tools if mcp.current else {})}
     extra = skills.prompt_section(skills.current) + (memory.prompt_section(mem) if mem else "")
     return Agent(client, ref.model, log, tools,
@@ -122,6 +122,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="cap the context window (also used when a model's window is unknown)")
     ap.add_argument("--no-summaries", action="store_true",
                     help="never summarize the oldest messages automatically (/compact still works)")
+    ap.add_argument("--sandbox", action="store_true",
+                    help="run bash in a sandbox (Linux, bubblewrap): writes only in the project, "
+                         "/tmp and ~/.cache, credentials hidden; sandboxed commands don't ask")
+    ap.add_argument("--no-network", action="store_true",
+                    help="with --sandbox: no network for commands either")
     ap.add_argument("--no-memory", action="store_true",
                     help="don't load or save memory (Telepathy) in this session")
     ap.add_argument("--version", action="version", version=f"diwan {__version__}")
@@ -138,6 +143,15 @@ def main(argv: list[str] | None = None) -> int:
     elif args.resume:
         log = Log.load(Path(args.resume).expanduser())
 
+    if args.sandbox:
+        why = sandbox.available()
+        if why:
+            print(f"diwan: {why}", file=sys.stderr)
+            return 1
+        sandbox.current = sandbox.Sandbox(cwd, Path.home(), network=not args.no_network)
+    elif args.no_network:
+        print("diwan: --no-network works with --sandbox", file=sys.stderr)
+        return 1
     start_mcp(sys.stderr)
     skills.current = skills.find(cwd)
     if not args.no_memory:

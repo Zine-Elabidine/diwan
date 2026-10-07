@@ -29,12 +29,21 @@ diwan --base-url http://localhost:8000/v1 -m <model>   # local vLLM / llama.cpp
 diwan --provider anthropic --base-url <url>   # an Anthropic-compatible gateway
 diwan --context 30000               # cap the window (to see compaction early)
 diwan --no-summaries                # clear old tool outputs, but never summarize
+diwan --sandbox                     # bash in a sandbox, without approvals (Linux, bubblewrap)
 ```
 
 Inside a session: `/model [provider:]<id>` switches model, `/models [provider] [text]` lists
 the catalog with prices, `/rewind [n]`, `/compact [on|off]`, `/notes`, `/skills`, `/memory`, `/mcp`, `/cost`, `/think`, `/new`, `/help`.
 Typing while the agent works queues the message: the model gets it after the current step
 (a turn about to end answers it first); Esc stops the turn instead.
+
+## Sandbox
+
+`--sandbox` (Linux, with bubblewrap) runs `bash` with the whole filesystem read-only except
+the project, a fresh `/tmp` and `~/.cache`; the places that hold credentials (`~/.ssh`,
+`~/.aws`, `~/.diwan`, ...) are hidden, and everything a command starts ends with it. In
+exchange, sandboxed commands run without asking. The network stays on (installing packages
+needs it), so a command could still send project files out; `--no-network` cuts it too.
 
 ## Long sessions
 

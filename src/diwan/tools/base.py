@@ -48,6 +48,7 @@ class Tool:
     description: str
     parameters: dict[str, Any]       # JSON schema of the arguments
     readonly: bool = False           # runs without approval inside the project
+    auto: bool = False               # changes things, but is confined: runs without approval
     path_arg: str | None = None      # the argument holding a path, checked by the path policy
     run: Callable[..., str]
 
