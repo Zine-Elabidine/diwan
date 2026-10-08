@@ -1,3 +1,5 @@
+![Diwan](docs/banner.png)
+
 # Diwan
 
 An agent runtime that keeps a permanent record of everything your agent does, and
