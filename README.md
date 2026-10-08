@@ -1,4 +1,4 @@
-![Diwan](docs/banner.png)
+![Diwan](docs/banner-wide.png)
 
 # Diwan
 
