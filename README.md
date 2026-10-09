@@ -32,6 +32,7 @@ diwan --provider anthropic --base-url <url>   # an Anthropic-compatible gateway
 diwan --context 30000               # cap the window (to see compaction early)
 diwan --no-summaries                # clear old tool outputs, but never summarize
 diwan --sandbox                     # bash in a sandbox, without approvals (Linux, bubblewrap)
+diwan --acp                         # server mode: driven by an editor or another program
 ```
 
 Inside a session: `/model [provider:]<id>` switches model, `/models [provider] [text]` lists
@@ -46,6 +47,25 @@ the project, a fresh `/tmp` and `~/.cache`; the places that hold credentials (`~
 `~/.aws`, `~/.diwan`, ...) are hidden, and everything a command starts ends with it. In
 exchange, sandboxed commands run without asking. The network stays on (installing packages
 needs it), so a command could still send project files out; `--no-network` cuts it too.
+
+Git hooks and config stay read-only in the sandbox (a command could otherwise plant code
+that runs later, outside it, on the user's next git command); commits and branches work.
+
+`write` and `edit` refuse a file the session hasn't read, or one changed since it read it
+(by the user, another session, a command): the agent reads it again instead of overwriting
+someone else's edit from an old copy.
+
+## Server mode
+
+`diwan --acp` speaks the [Agent Client Protocol](https://agentclientprotocol.com) (v1) on
+stdin/stdout: an editor that supports ACP (Zed, JetBrains, Neovim) or any program can start
+sessions, send prompts, stream the answer and tool calls back, and answer approvals. One
+process holds several sessions, all in the folder it was started in, and can load earlier
+ones. MCP servers come from `~/.diwan/mcp.json`; memory is off. To try it from the terminal:
+
+```
+uv run python scripts/acp_client.py "list the python files here"
+```
 
 ## Long sessions
 
@@ -136,5 +156,6 @@ waits its turn, and results keep the calls' order.
 ```
 docs/reading-list.md   what to read in each reference runtime, and in what order
 scripts/fetch-refs.sh  clone the reference runtimes into refs/ (gitignored)
+scripts/acp_client.py  a small ACP client, to try server mode (the tests use it too)
 refs/                  22 open-source runtimes, read-only, never committed
 ```

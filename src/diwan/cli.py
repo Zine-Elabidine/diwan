@@ -7,19 +7,21 @@ import atexit
 import os
 import sys
 from pathlib import Path
+from collections.abc import Callable
 from typing import TextIO
 
 from rich.text import Text
-from tarjuman import TarjumanError, Usage, errors, providers
+from tarjuman import TarjumanError, ToolCall, Usage, errors, providers
 
-from . import __version__, commands, mcp, memory, sandbox, skills
+from . import __version__, acp, commands, mcp, memory, sandbox, skills
 from .agent import Agent, Limits
+from .events import UIEvent
 from .log import Log
 from .models import Ref, Router
 from .paths import PathPolicy
 from .prompt import system_prompt
 from .session import Approvals, Session
-from .tools import default_tools
+from .tools import Tool, default_tools
 from .ui import Terminal
 
 # the model used when none is given, per provider ("local" has none: say which with -m)
@@ -45,7 +47,8 @@ def load_env_file() -> None:
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def build_agent(ref: Ref, log: Log, term: Terminal, cwd: Path, router: Router,
+def build_agent(ref: Ref, log: Log, on: Callable[[UIEvent], None],
+                approve: Callable[[ToolCall, Tool, bool], bool], cwd: Path, router: Router,
                 limits: Limits | None = None) -> Agent:
     client = router.client(ref.provider)
     mem = memory.current
@@ -56,7 +59,7 @@ def build_agent(ref: Ref, log: Log, term: Terminal, cwd: Path, router: Router,
     extra = skills.prompt_section(skills.current) + (memory.prompt_section(mem) if mem else "")
     return Agent(client, ref.model, log, tools,
                  lambda provider, model: system_prompt(cwd, model, provider) + extra,
-                 approve=term.approve, on=term.on, limits=limits, paths=paths)
+                 approve=approve, on=on, limits=limits, paths=paths)
 
 
 def start_mcp(out: TextIO) -> None:
@@ -99,6 +102,27 @@ def start_ref(args: argparse.Namespace, log: Log | None, router: Router) -> Ref:
     return Ref(router.default, model)
 
 
+def serve_acp(args: argparse.Namespace, cwd: Path, limits: Limits) -> int:
+    """`diwan --acp`: sessions are created by the client; each starts on the chosen model."""
+    router = Router(args.provider or ("local" if args.base_url else "openrouter"), args.base_url)
+    try:
+        ref = start_ref(args, None, router)
+    except TarjumanError as e:
+        print(f"diwan: {e}", file=sys.stderr)
+        return 1
+
+    def new_log(folder: Path) -> Log:
+        return Log.new(cwd=str(folder), provider=ref.provider, model=ref.model, diwan=__version__)
+
+    def make_agent(log: Log, on: Callable[[UIEvent], None],
+                   approve: Callable[[ToolCall, Tool, bool], bool]) -> Agent:
+        provider, model = log.current_model()   # a loaded session goes on with its own model
+        at = Ref(provider or ref.provider, model) if model else ref
+        return build_agent(at, log, on, approve, cwd, router, limits)
+
+    return acp.run(cwd, new_log, make_agent, auto=args.yes)
+
+
 def main(argv: list[str] | None = None) -> int:
     load_env_file()
     ap = argparse.ArgumentParser(prog="diwan",
@@ -129,6 +153,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="with --sandbox: no network for commands either")
     ap.add_argument("--no-memory", action="store_true",
                     help="don't load or save memory (Telepathy) in this session")
+    ap.add_argument("--acp", action="store_true",
+                    help="server mode: speak the Agent Client Protocol on stdin/stdout, for an "
+                         "editor or another program (no memory; MCP from ~/.diwan/mcp.json)")
     ap.add_argument("--version", action="version", version=f"diwan {__version__}")
     args = ap.parse_args(argv)
     limits = Limits(context=args.context, summaries=not args.no_summaries)
@@ -154,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     start_mcp(sys.stderr)
     skills.current = skills.find(cwd)
+    if args.acp:
+        return serve_acp(args, cwd, limits)
     if not args.no_memory:
         start_memory(cwd, sys.stderr)
     router = Router(args.provider or ("local" if args.base_url else "openrouter"), args.base_url)
@@ -165,8 +194,8 @@ def main(argv: list[str] | None = None) -> int:
         ref = start_ref(args, log, router)
         if log is None:
             log = Log.new(cwd=str(cwd), provider=ref.provider, model=ref.model, diwan=__version__)
-        session = Session(lambda lg, at: build_agent(at, lg, term, cwd, router, limits), log, ref,
-                          router, cwd, approvals)
+        session = Session(lambda lg, at: build_agent(at, lg, term.on, term.approve, cwd, router,
+                                                     limits), log, ref, router, cwd, approvals)
     except TarjumanError as e:
         c.print(Text(str(e), style="red"))
         return 1
@@ -179,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
         from .tui import DiwanApp
 
         def make_agent(new_log: Log, at: Ref) -> Agent:
-            return build_agent(at, new_log, term, cwd, router, limits)
+            return build_agent(at, new_log, term.on, term.approve, cwd, router, limits)
 
         DiwanApp(make_agent, log, cwd, router, ref, approvals=approvals,
                  show_reasoning=args.think).run()

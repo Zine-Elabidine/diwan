@@ -241,7 +241,7 @@ It's aesthetic: he loves Hyprland. It is built as the frame for the room, not ju
 Low-regret first: each step is useful even if the War Room is killed.
 1. **Stale-read check** in `write`/`edit`: refuse if the file changed since this session read it.
 2. **Sandbox `.git` fix:** make `.git` read-only in bwrap.
-3. **Server mode:** sessions as a process that a window or room can drive.
+3. **Server mode:** sessions as a process that a window or room can drive. *v0 done 2026-10-09:* `diwan --acp` (ACP v1: new, load, prompt, streaming, approvals, cancel), several sessions per process. Known debt: one folder per server; the client's MCP servers are ignored; no memory; load replays text only.
 4. **Waking an idle session** on a message (`send()` only queues today).
 5. **The room, awareness OFF:** several sessions plus tiling.
 6. **Facts layer:** cards, the `room` tool, overlap notices, protection against git restore.
