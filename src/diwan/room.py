@@ -4,7 +4,7 @@ Room's shared working tree); each has its own log, model and approvals. Sessions
 in rooms you are not looking at; the sidebar marks a room whose session waits for you.
 
 Layout: one session fills the room; two split it; from three on, the first is the master on
-the left and the others stack on the right. Alt+F zooms the focused one."""
+the left and the others stack on the right. Alt+Z zooms the focused one."""
 
 from __future__ import annotations
 
@@ -22,8 +22,10 @@ from textual.widgets import ContentSwitcher, Label, ListItem, ListView, Static
 
 from .tui import SessionPane, pane_of
 
-KEYS = ("alt+enter new session · alt+h/j/k/l move · alt+f zoom · alt+q close · "
-        "alt+n new room · alt+1..9 room · esc stop · ctrl+q quit")
+# only keys a terminal really delivers as Alt: alt+enter arrives as plain enter, alt+f and
+# alt+b as word moves (readline), alt+1 as a symbol (tests/test_room.py checks the rest)
+KEYS = ("alt+s new session · alt+h/j/k/l move · alt+z zoom · alt+q close · "
+        "alt+n new room · alt+r/alt+e next/previous room · esc stop · ctrl+q quit")
 
 
 class Room(Container):
@@ -82,15 +84,16 @@ class RoomApp(App):
     #buttons Button { margin: 0 0 0 1; }
     """
     BINDINGS: ClassVar = [
-        Binding("alt+enter", "new_session", "New session", priority=True),
+        Binding("alt+s", "new_session", "New session", priority=True),
         Binding("alt+q", "close_session", "Close", priority=True),
-        Binding("alt+f", "zoom", "Zoom", priority=True),
+        Binding("alt+z", "zoom", "Zoom", priority=True),
         Binding("alt+h", "move('left')", show=False, priority=True),
         Binding("alt+l", "move('right')", show=False, priority=True),
         Binding("alt+k", "move('up')", show=False, priority=True),
         Binding("alt+j", "move('down')", show=False, priority=True),
         Binding("alt+n", "new_room", "New room", priority=True),
-        *(Binding(f"alt+{i}", f"go_room({i})", show=False, priority=True) for i in range(1, 10)),
+        Binding("alt+r", "next_room(1)", "Next room", priority=True),
+        Binding("alt+e", "next_room(-1)", "Previous room", priority=True),
         Binding("escape", "interrupt", "Stop", priority=True),
         Binding("ctrl+t", "toggle_think", "Reasoning"),
         Binding("ctrl+b", "toggle_agents", "Agents"),
@@ -163,7 +166,7 @@ class RoomApp(App):
         room = Room(f"room {self._count}", f"room-{self._count}")
         stage = self.query_one("#stage", ContentSwitcher)
         await stage.mount(room)
-        await room.mount(Static("No session here. alt+enter starts one.", classes="empty"))
+        await room.mount(Static("No session here. alt+s starts one.", classes="empty"))
         await self.query_one("#rooms", ListView).append(ListItem(Label(room.title)))
         self.show_room(room)
         await self.action_new_session()
@@ -179,9 +182,9 @@ class RoomApp(App):
             panes[0].prompt.focus()
         self._refresh_bar()
 
-    def action_go_room(self, n: int) -> None:
-        if 0 < n <= len(self.rooms):
-            self.show_room(self.rooms[n - 1])
+    def action_next_room(self, step: int) -> None:
+        rooms = self.rooms
+        self.show_room(rooms[(rooms.index(self.room) + step) % len(rooms)])
 
     @on(ListView.Selected, "#rooms")
     def _room_picked(self, event: ListView.Selected) -> None:

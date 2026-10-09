@@ -66,8 +66,9 @@ sessions work in the same folder, each with its own log, model and approvals; ea
 model picker (the current model, those listed in `~/.diwan/models`, one `provider:model` per
 line, and each provider's default).
 
-Keys: `alt+enter` new session, `alt+h/j/k/l` move between them, `alt+f` zoom one, `alt+q`
-close it, `alt+n` new room, `alt+1..9` go to a room, `esc` stop the focused session.
+Keys: `alt+s` new session, `alt+h/j/k/l` move between them, `alt+z` zoom one, `alt+q`
+close it, `alt+n` new room, `alt+r` / `alt+e` next / previous room (or click it), `esc` stop
+the focused session.
 
 ## Server mode
 
