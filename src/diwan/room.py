@@ -20,22 +20,26 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import ContentSwitcher, Label, ListItem, ListView, Static
 
+from .theme import AMBER, BG, CYAN, DIM, DIWAN, GREEN, INK
 from .tui import SessionPane, pane_of
 
 # only keys a terminal really delivers as Alt: alt+enter arrives as plain enter, alt+f and
 # alt+b as word moves (readline), alt+1 as a symbol (tests/test_room.py checks the rest)
-KEYS = ("alt+s new session · alt+h/j/k/l move · alt+z zoom · alt+q close · "
-        "alt+n new room · alt+r/alt+e next/previous room · esc stop · ctrl+q quit")
+KEYS = "alt+s new  ·  alt+hjkl move  ·  alt+z zoom  ·  alt+q close  ·  alt+n room  ·  alt+r/e switch "
+
+MARKS = {"thinking": ("●", CYAN), "running": ("●", CYAN), "waiting": ("◆", AMBER),
+         "idle": ("●", GREEN)}
 
 
 class Room(Container):
     """The sessions of one room, tiled."""
 
     DEFAULT_CSS = """
-    Room { layout: grid; grid-gutter: 1 2; padding: 1 2; height: 1fr; }
-    Room > SessionPane { border: round $panel-lighten-2; }
-    Room > SessionPane:focus-within { border: round $accent; }
-    Room > .empty { color: $text-muted; content-align: center middle; height: 1fr; width: 1fr; }
+    Room { layout: grid; grid-gutter: 1 2; padding: 1 2 0 2; height: 1fr; }
+    Room > SessionPane { border: round $rule; border-title-color: $dim; opacity: 75%; }
+    Room > SessionPane:focus-within { border: round $accent; border-title-color: $accent;
+                                      border-title-style: bold; opacity: 100%; }
+    Room > .empty { color: $dim; content-align: center middle; height: 1fr; width: 1fr; }
     """
 
     def __init__(self, name: str, room_id: str):
@@ -63,7 +67,7 @@ class Room(Container):
         if n >= 3:
             shown[0].styles.row_span = n - 1       # the master, left; the rest stack right
         for p in panes:
-            p.border_title = f"{p.label} · {p.ref.model.split('/')[-1]}"
+            p.border_title = f" {p.label} "
 
 
 class RoomApp(App):
@@ -71,17 +75,17 @@ class RoomApp(App):
     CSS = """
     Screen { layout: vertical; }
     #body { height: 1fr; }
-    #sidebar { width: 26; border-right: solid $panel-lighten-2; }
-    #sidebar-title { padding: 0 1; color: $text-muted; height: 1; }
-    #rooms { height: 1fr; background: transparent; }
+    #sidebar { width: 24; background: $surface; padding: 1 0 0 0; }
+    #brand { padding: 0 2; height: 1; }
+    #sidebar-title { padding: 0 2; color: $dim; height: 1; margin: 1 0 0 0; }
+    #rooms { height: 1fr; background: transparent; margin: 0 0 0 0; }
+    #rooms > ListItem { padding: 0 1 0 1; background: transparent; border-left: outer $surface; }
+    #rooms > ListItem.-highlight { background: $boost; border-left: outer $accent; }
+    #rooms:focus > ListItem.-highlight { background: $boost; }
     #stage { width: 1fr; height: 1fr; }
-    #bar { height: 1; padding: 0 1; background: $panel; color: $text-muted; }
-    Approval { align: center middle; }
-    #dialog { width: 90; max-width: 95%; height: auto; max-height: 80%; padding: 1 2;
-              border: thick $accent; background: $surface; }
-    #preview { height: auto; max-height: 24; margin: 1 0; }
-    #buttons { height: auto; align-horizontal: right; }
-    #buttons Button { margin: 0 0 0 1; }
+    #bar { height: 1; padding: 0 1; background: $surface; }
+    #bar-left { width: 1fr; }
+    #bar-right { width: auto; color: $dim; }
     """
     BINDINGS: ClassVar = [
         Binding("alt+s", "new_session", "New session", priority=True),
@@ -103,6 +107,8 @@ class RoomApp(App):
     def __init__(self, make_pane: Callable[[], SessionPane]):
         """make_pane: a new session (its own log, in the room's folder)."""
         super().__init__()
+        self.register_theme(DIWAN)
+        self.theme = "diwan"
         self.make_pane = make_pane
         self._count = 0
 
@@ -111,10 +117,13 @@ class RoomApp(App):
     def compose(self) -> ComposeResult:
         with Horizontal(id="body"):
             with Vertical(id="sidebar"):
+                yield Static(RText.assemble(("◆ ", AMBER), ("diwan", f"bold {INK}")), id="brand")
                 yield Static("ROOMS", id="sidebar-title")
                 yield ListView(id="rooms")
             yield ContentSwitcher(id="stage")
-        yield Static(id="bar")
+        with Horizontal(id="bar"):
+            yield Static(id="bar-left")
+            yield Static(KEYS, id="bar-right")
 
     async def on_mount(self) -> None:
         await self.action_new_room()
@@ -139,25 +148,26 @@ class RoomApp(App):
         return panes[0] if panes else None
 
     def _refresh_bar(self) -> None:
-        marks = {"thinking": ("●", "cyan"), "running": ("●", "cyan"), "waiting": ("●", "yellow"),
-                 "idle": ("○", "green")}
-        t = RText()
+        for room in self.rooms:
+            for p in room.panes:
+                title = f" {p.label} "
+                if p.border_title != title:
+                    p.border_title = title
+        t = RText.assemble((f" {self.room.title} ", f"bold {BG} on {AMBER}"), "  ")
         for p in self.room.panes:
-            mark, style = marks.get(p.state, ("○", "dim"))
-            t.append(f"{mark} ", style=style)
-            t.append(f"{p.label} {p.state}   ", style="bold" if p is self.pane else "dim")
-        t.append(KEYS, style="dim")
-        self.query_one("#bar", Static).update(t)
+            mark, color = MARKS.get(p.state, ("○", DIM))
+            t.append(f"{mark} ", style=color)
+            t.append(f"{p.label}  ", style=f"bold {INK}" if p is self.pane else DIM)
+        self.query_one("#bar-left", Static).update(t)
         rooms = self.query_one("#rooms", ListView)
         for item, room in zip(rooms.children, self.rooms, strict=False):
-            waiting = any(p.state == "waiting" for p in room.panes)
-            working = any(p.running for p in room.panes)
-            label = item.query_one(Label)
-            label.update(RText.assemble(
-                (f"{room.title}  ", "bold" if room is self.room else ""),
-                (f"{len(room.panes)} ", "dim"),
-                ("● waiting" if waiting else "● working" if working else "", "yellow" if waiting
-                 else "cyan")))
+            here = room is self.room
+            line = RText.assemble((room.title, f"bold {INK}" if here else DIM), "  ")
+            for p in room.panes:   # one dot per session, colored by what it is doing
+                line.append(MARKS.get(p.state, ("○", DIM))[0], style=MARKS.get(p.state, ("", DIM))[1])
+            if any(p.state == "waiting" for p in room.panes):
+                line.append("  needs you", style=AMBER)
+            item.query_one(Label).update(line)
 
     # --- rooms ------------------------------------------------------------------------------
 

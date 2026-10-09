@@ -31,6 +31,7 @@ from .models import Ref, Router, choices
 from .present import (child_line, fmt_context, fmt_cost, fmt_tokens, fmt_usage, preview, short,
                       summarize_call, turn_mark)
 from .session import Approvals, Session
+from .theme import AMBER, CYAN, DIM, DIWAN, GREEN
 from .tools import Tool
 
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -119,6 +120,14 @@ def diff_text(call: ToolCall) -> RText:
 
 
 class Approval(ModalScreen[str]):
+    DEFAULT_CSS = """
+    Approval { align: center middle; background: $background 60%; }
+    #dialog { width: 90; max-width: 95%; height: auto; max-height: 80%; padding: 1 2;
+              border: round $accent; background: $surface; }
+    #preview { height: auto; max-height: 24; margin: 1 0; }
+    #buttons { height: auto; align-horizontal: right; }
+    #buttons Button { margin: 0 0 0 1; }
+    """
     BINDINGS: ClassVar = [Binding("y", "answer('yes')", "Yes"), Binding("a", "answer('always')", "Always"),
                 Binding("n", "answer('no')", "No"), Binding("escape", "answer('no')", "No")]
 
@@ -155,29 +164,31 @@ class SessionPane(Vertical):
     its events are drawn on the app thread; approvals are dialogs the agent thread waits on."""
 
     DEFAULT_CSS = """
-    SessionPane { height: 1fr; width: 1fr; }
-    SessionPane .top { height: 1; padding: 0 1; background: $panel; color: $text-muted; }
-    SessionPane .title { width: 1fr; height: 1; }
-    SessionPane.tiled .title { display: none; }
-    SessionPane.tiled .top { background: transparent; align-horizontal: right; }
-    SessionPane .model { width: 44; height: 1; }
+    SessionPane { height: 1fr; width: 1fr; background: $background; }
+    SessionPane .top { height: 1; padding: 0 1; background: $surface; color: $dim; }
+    SessionPane.tiled .top { display: none; }
     SessionPane .main { height: 1fr; }
-    SessionPane .chat { width: 1fr; padding: 0 1; scrollbar-size-vertical: 1; }
-    SessionPane .agents { width: 32; border-left: solid $panel-lighten-2; display: none; padding: 0 1; }
+    SessionPane .chat { width: 1fr; padding: 0 2; scrollbar-size-vertical: 1; }
+    SessionPane .agents { width: 32; border-left: solid $rule; display: none; padding: 0 1; }
     SessionPane .agents.shown { display: block; }
-    UserMsg { margin: 1 0 0 0; padding: 0 1; background: $boost; border-left: thick $accent; }
+    UserMsg { margin: 1 0 0 0; padding: 0 1; color: $foreground; background: $boost;
+              border-left: outer $accent; }
     SessionPane Markdown { margin: 1 0 0 0; padding: 0; }
     SessionPane Markdown > *:last-child { margin-bottom: 0; }
     .tool { height: auto; margin: 1 0 0 0; }
-    .tool-out { padding: 0 0 0 2; }
+    .tool-out { padding: 0 0 0 2; color: $dim; }
     .more { padding: 0 0 0 1; border: none; background: transparent; }
-    .reasoning { margin: 1 0 0 0; padding: 0; border: none; background: transparent; color: $text-muted; }
-    Footer { color: $text-muted; margin: 1 0 0 0; }
+    .reasoning { margin: 1 0 0 0; padding: 0; border: none; background: transparent; color: $dim; }
+    Footer { color: $dim; margin: 1 0 0 0; }
     .notice { color: $warning; margin: 1 0 0 0; }
-    SessionPane Prompt { height: auto; max-height: 10; min-height: 3; border: round $panel-lighten-2;
-                         margin: 0 1; }
-    SessionPane Prompt:focus { border: round $accent; }
-    SessionPane .status { height: 1; padding: 0 1; color: $text-muted; }
+    SessionPane Prompt { height: auto; max-height: 10; min-height: 1; margin: 1 2 0 2; padding: 0 1;
+                         border: none; border-left: outer $rule; background: $surface; }
+    SessionPane Prompt:focus { border-left: outer $accent; }
+    SessionPane .bottom { height: 1; margin: 0 2 0 2; }
+    SessionPane .status { width: 1fr; height: 1; color: $dim; }
+    SessionPane .model { width: auto; min-width: 20; max-width: 46; height: 1; }
+    SessionPane .model > SelectCurrent { background: transparent; color: $dim; border: none; }
+    SessionPane .model:focus > SelectCurrent { color: $accent; }
     """
 
     class Closed(TMessage):
@@ -229,21 +240,28 @@ class SessionPane(Vertical):
 
     @property
     def label(self) -> str:
-        """A short name for this session (status bars, dialogs)."""
-        return self.session_log.id[-6:]
+        """A short name for this session (tiles, status bars, dialogs): its first message,
+        until it has one, the end of its id."""
+        first = next((m.text for m in self.session_log.messages() if m.role == "user"), "")
+        first = " ".join(first.split())
+        if not first:
+            return self.session_log.id[-6:]
+        return first if len(first) <= 28 else first[:27] + "…"
 
     # --- layout -----------------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        with Horizontal(classes="top"):
-            yield Static(classes="title")
-            yield Select([(m, m) for m in choices(self.ref)], value=str(self.ref),
-                         allow_blank=False, compact=True, classes="model")
+        yield Static(classes="top title")
         with Horizontal(classes="main"):
             yield VerticalScroll(classes="chat")
             yield Tree("agents", classes="agents")
-        yield Prompt(id=self.prompt_id, soft_wrap=True, show_line_numbers=False, compact=True)
-        yield Static(classes="status")
+        prompt = Prompt(id=self.prompt_id, soft_wrap=True, show_line_numbers=False, compact=True)
+        prompt.placeholder = "Ask Diwan…   / for commands"
+        yield prompt
+        with Horizontal(classes="bottom"):
+            yield Static(classes="status")
+            yield Select(_model_options(self.ref), value=str(self.ref),
+                         allow_blank=False, compact=True, classes="model")
 
     def on_mount(self) -> None:
         self.chat = self.query_one(".chat", VerticalScroll)
@@ -266,11 +284,11 @@ class SessionPane(Vertical):
 
     def _update_top(self) -> None:
         self.query_one(".title", Static).update(RText.assemble(
-            ("diwan ", "bold cyan"), (f"{__version__} · ", "dim"),
-            (f"{self.cwd} · session {self.session_log.id}", "dim")))
+            ("diwan ", f"bold {AMBER}"), (f"{__version__} · {self.cwd} · session {self.session_log.id}",
+                                          DIM)))
         picker: Select[str] = self.query_one(".model", Select)
         if picker.value != str(self.ref):
-            picker.set_options([(m, m) for m in choices(self.ref)])
+            picker.set_options(_model_options(self.ref))
             picker.value = str(self.ref)
 
     def _update_agents(self) -> None:
@@ -287,23 +305,21 @@ class SessionPane(Vertical):
         t = RText()
         if self.state in ("thinking", "running"):
             secs = int(time.monotonic() - self._state_since)
-            t.append(f"{SPINNER[self._frame % len(SPINNER)]} {self.state}", style="cyan")
+            t.append(f"{SPINNER[self._frame % len(SPINNER)]} {self.state}", style=CYAN)
             if secs >= 2:
-                t.append(f" {secs}s", style="dim")
-            t.append("  esc to stop", style="dim")
+                t.append(f" {secs}s", style=DIM)
         elif self.state == "waiting":
-            t.append("● waiting for your approval", style="yellow")
+            t.append("◆ needs your approval", style=f"bold {AMBER}")
         else:
-            t.append("● ready", style="green")
+            t.append("● ready", style=GREEN)
         spent = self.agent.total
         cost = fmt_cost(spent.cost) if spent.cost is not None else "–"
         total_in = spent.input + spent.cache_read + spent.cache_write
-        t.append(f"   {fmt_tokens(total_in)} in · {fmt_tokens(spent.output)} out · {cost}",
-                 style="dim")
+        t.append(f"   {fmt_tokens(total_in)} ↑ {fmt_tokens(spent.output)} ↓  {cost}", style=DIM)
         ctx, style = fmt_context(self.agent.context_use)
-        t.append(f"   {ctx}", style=style)
+        t.append(f"   {ctx}", style=style if style != "dim" else DIM)
         if self.prompt_id:
-            t.append("   ctrl+t reasoning · ctrl+b agents · /help", style="dim")
+            t.append("   ctrl+t reasoning · ctrl+b agents · /help", style=DIM)
         self.status.update(t)
 
     async def _add(self, widget) -> None:
@@ -564,6 +580,16 @@ class SessionPane(Vertical):
         self.query_one(".agents").toggle_class("shown")
 
 
+def _model_options(current: Ref) -> list[tuple[str, str]]:
+    """The picker's entries: the model's short name, with its provider when not OpenRouter."""
+    out = []
+    for m in choices(current):
+        provider, _, model = m.partition(":")
+        name = model.split("/")[-1]
+        out.append((f"{name}" if provider == "openrouter" else f"{name} · {provider}", m))
+    return out
+
+
 def pane_of(widget: object) -> SessionPane | None:
     """The session a widget belongs to (the focused input's, usually)."""
     node = widget
@@ -578,12 +604,6 @@ class DiwanApp(App):
     TITLE = "diwan"
     CSS = """
     Screen { layout: vertical; }
-    Approval { align: center middle; }
-    #dialog { width: 90; max-width: 95%; height: auto; max-height: 80%; padding: 1 2;
-              border: thick $accent; background: $surface; }
-    #preview { height: auto; max-height: 24; margin: 1 0; }
-    #buttons { height: auto; align-horizontal: right; }
-    #buttons Button { margin: 0 0 0 1; }
     """
     BINDINGS: ClassVar = [
         Binding("escape", "interrupt", "Stop", priority=True),
@@ -597,6 +617,8 @@ class DiwanApp(App):
                  router: Router, ref: Ref, *, approvals: Approvals | None = None,
                  show_reasoning: bool = False, first_prompt: str | None = None):
         super().__init__()
+        self.register_theme(DIWAN)
+        self.theme = "diwan"
         self.pane = SessionPane(make_agent, log, cwd, router, ref, approvals=approvals,
                                 show_reasoning=show_reasoning, first_prompt=first_prompt,
                                 prompt_id="prompt")
