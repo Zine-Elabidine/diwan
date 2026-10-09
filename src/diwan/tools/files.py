@@ -2,9 +2,33 @@
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+
 from .base import Tool, ToolContext, ToolError, schema
 
 MAX_LINE = 2_000
+
+
+def _digest(p: Path) -> str:
+    return hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+def _remember(ctx: ToolContext, p: Path) -> None:
+    if ctx.seen is not None:
+        ctx.seen[p] = _digest(p)
+
+
+def _check_fresh(ctx: ToolContext, p: Path, path: str) -> None:
+    """Refuse to change an existing file this session hasn't read, or that changed since:
+    writing from an old picture of it would silently undo someone else's edit."""
+    if ctx.seen is None or not p.exists():
+        return
+    if p not in ctx.seen:
+        raise ToolError(f"{path}: read it before changing it")
+    if ctx.seen[p] != _digest(p):
+        raise ToolError(f"{path} changed since you last read it (the user, another session or "
+                        "a command); read it again before changing it")
 
 
 class Read(Tool):
@@ -23,6 +47,7 @@ class Read(Tool):
         if not p.is_file():
             raise ToolError(f"{path}: no such file")
         lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        _remember(ctx, p)
         start = max(offset, 1) - 1
         chunk = lines[start:start + limit]
         out = [f"{i:>6}\t{line[:MAX_LINE]}" for i, line in enumerate(chunk, start + 1)]
@@ -42,9 +67,11 @@ class Write(Tool):
 
     def run(self, ctx: ToolContext, path: str, content: str) -> str:
         p = ctx.resolve(path)
+        _check_fresh(ctx, p, path)
         p.parent.mkdir(parents=True, exist_ok=True)
         existed = p.exists()
         p.write_text(content, encoding="utf-8")
+        _remember(ctx, p)
         return f"{'Overwrote' if existed else 'Created'} {path} ({content.count(chr(10)) + 1} lines)"
 
 
@@ -62,6 +89,7 @@ class Edit(Tool):
         p = ctx.resolve(path)
         if not p.is_file():
             raise ToolError(f"{path}: no such file")
+        _check_fresh(ctx, p, path)
         text = p.read_text(encoding="utf-8")
         n = text.count(old)
         if not old or n == 0:
@@ -71,4 +99,5 @@ class Edit(Tool):
                             "or set replace_all")
         p.write_text(text.replace(old, new) if replace_all else text.replace(old, new, 1),
                      encoding="utf-8")
+        _remember(ctx, p)
         return f"Edited {path} ({n if replace_all else 1} replacement{'s' if replace_all and n > 1 else ''})"

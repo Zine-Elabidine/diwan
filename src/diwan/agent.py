@@ -54,10 +54,12 @@ class Agent:
                  approve: Callable[[ToolCall, Tool, bool], bool] = lambda c, s, outside: True,
                  on: Callable[[UIEvent], None] = lambda e: None, limits: Limits | None = None,
                  sleep: Callable[[float], None] | None = None, paths: PathPolicy | None = None,
-                 child: bool = False, denied: frozenset[str] = frozenset()):
+                 child: bool = False, denied: frozenset[str] = frozenset(),
+                 seen: dict[Path, str] | None = None):
         """child: started by another agent (it can't start agents itself).
         denied: tools kept in the request (a fork's must match its parent's, for the cache)
-        but refused when called."""
+        but refused when called.
+        seen: the files it has read, with their content hash (a fork starts from its parent's)."""
         self.provider, self.model, self.log, self.tools = provider, model, log, tools
         self.child, self.denied = child, denied
         # the system prompt names the model, so it is built again for each one
@@ -69,6 +71,7 @@ class Agent:
         self.sleep = sleep  # for tests; by default retry waits end early on interrupt
         self.paths = paths or PathPolicy(Path(log.events[0].data.get("cwd") or "."))
         self.total = Usage()
+        self.seen: dict[Path, str] = seen if seen is not None else {}
         self._cancel = Cancel()
         self._children_usage = Usage()   # what child agents spent during the running turn
         self._lock = threading.Lock()
@@ -372,7 +375,7 @@ class Agent:
         self.on(ToolStarted(call))
         try:
             spawn = self._spawn if "agent" in self.tools and not self.child else None
-            ctx = ToolContext(self.paths, self._cancel, self.log, spawn)
+            ctx = ToolContext(self.paths, self._cancel, self.log, spawn, self.seen)
             result = ToolResult(call.id, tool.run(ctx, **args))
         except ToolError as e:
             result = ToolResult(call.id, str(e), True)
@@ -416,7 +419,7 @@ class Agent:
 
         child = Agent(self.provider, self.model, log, tools, system, approve=self.approve,
                       on=forward, limits=self.limits, sleep=self.sleep, paths=self.paths,
-                      child=True, denied=denied)
+                      child=True, denied=denied, seen=dict(self.seen) if fork else None)
         ended = child.turn(text, cancel=self._cancel)   # its end reaches the UI through `forward`
         with self._lock:                                 # children may run side by side
             self._children_usage += child.total          # counted in this turn's usage

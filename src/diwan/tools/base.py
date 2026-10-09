@@ -30,6 +30,9 @@ class ToolContext:
     cancel: Cancel = field(default_factory=Cancel)   # the running turn's stop signal
     log: Log | None = None                           # the session, for recall
     spawn: Callable[[str, bool, bool], str] | None = None   # another agent: (task, readonly, fork)
+    # file -> hash of its content when this session last read or wrote it; `write` and `edit`
+    # refuse a file changed since (by the user, another session, a command). None: no checks
+    seen: dict[Path, str] | None = None
 
     @property
     def cwd(self) -> Path:

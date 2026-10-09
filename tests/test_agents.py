@@ -99,3 +99,22 @@ def test_a_fork_starts_from_the_parents_last_request(tmp_path):
     refused = [r.text for m in a.provider.requests[3] for r in m.tool_results]
     assert all("Unknown tool" in t for t in refused) and len(refused) == 2
     assert "[agent: 3 steps;" in a.log.messages()[2].tool_results[0].text
+
+
+def test_a_session_must_reread_a_file_its_child_changed(tmp_path):
+    f = tmp_path / "a.py"
+    f.write_text("x = 1\n")
+    script = [call("p0", "read", path="a.py"),
+              call("p1", "agent", task="set x to 2", readonly=False),
+              call("k1", "read", path="a.py"),
+              call("k2", "edit", path="a.py", old="1", new="2"),
+              reply("done"),
+              call("p2", "edit", path="a.py", old="2", new="3"),   # from its old picture: refused
+              call("p3", "read", path="a.py"),
+              call("p4", "edit", path="a.py", old="2", new="3"),
+              reply("x is 3")]
+    a, ended, _ = run(tmp_path, script)
+    assert ended.reason == "done"
+    results = [b for m in a.log.messages() if m.role == "tool" for b in m.content]
+    assert any(r.is_error and "changed since" in r.text for r in results)
+    assert f.read_text() == "x = 3\n"
