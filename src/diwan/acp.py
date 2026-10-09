@@ -5,6 +5,10 @@ It is a third front-end, like ui.py and tui.py: the agent's events go out as `se
 notifications, approvals as `session/request_permission` requests, and prompts come in as
 `session/prompt`. Messages are JSON-RPC 2.0, one per line; stdout carries nothing else.
 
+Diwan's own additions (ACP lets agents add methods starting with `_`): `_diwan/message` gives
+a session a message whenever (runner.py): queued during a turn, or it wakes an idle session;
+such a turn's end is announced with the `_diwan/turn_ended` notification.
+
 One process holds several sessions. For now they all run in the server's folder: sandbox,
 skills and MCP are set per process (cli.py), so a session elsewhere is refused. The client's
 MCP servers are not used (~/.diwan/mcp.json is), and Telepathy memory is off."""
@@ -23,9 +27,10 @@ from tarjuman import ReasoningDelta, TextDelta, ToolCall
 
 from . import __version__
 from .agent import Agent
-from .events import ChildEvent, ToolFinished, ToolStarted, UIEvent, UserAdded
+from .events import ChildEvent, ToolFinished, ToolStarted, TurnEnded, UIEvent, UserAdded
 from .log import Log, sessions_dir
 from .present import summarize_call
+from .runner import Busy, Runner
 from .session import Approvals
 from .tools import Tool
 
@@ -62,8 +67,18 @@ class AcpSession:
         self.approvals = Approvals(auto=auto)
         self.announced: set[str] = set()     # tool calls the client already knows about
         self.pending: set[Future[Any]] = set()   # permission requests awaiting an answer
-        self.busy = threading.Lock()         # one prompt at a time
         self.agent = make_agent(log, self.on, self.approve)
+        self.runner = Runner(self.agent, on_wake=self._woke, on_woken_end=self._woken_end)
+
+    def _woke(self, text: str) -> None:
+        """A turn starts with no prompt: show the client what started it."""
+        self.update({"sessionUpdate": "user_message_chunk", "content": {"type": "text", "text": text}})
+
+    def _woken_end(self, ended: TurnEnded) -> None:
+        """No session/prompt waits for this turn: say it ended (a Diwan notification)."""
+        self.server.notify("_diwan/turn_ended", {"sessionId": self.id,
+                                                 "stopReason": STOP_REASONS.get(ended.reason, "end_turn"),
+                                                 **({"error": ended.error} if ended.error else {})})
 
     def update(self, body: dict[str, Any]) -> None:
         self.server.notify("session/update", {"sessionId": self.id, "update": body})
@@ -265,18 +280,23 @@ class Server:
             return {}
         if method == "session/prompt":
             s = self._session(p)
-            if not s.busy.acquire(blocking=False):
-                raise RpcError(INVALID_REQUEST, "this session is already working on a prompt")
             try:
-                ended = s.agent.turn(prompt_text(p.get("prompt") or []))
-            finally:
-                s.busy.release()
+                ended = s.runner.run(prompt_text(p.get("prompt") or []))
+            except Busy:
+                raise RpcError(INVALID_REQUEST, "this session is already working on a turn") from None
             if ended.reason == "error":
                 raise RpcError(INTERNAL, ended.error or "the turn failed")
             return {"stopReason": STOP_REASONS[ended.reason]}
         if method == "session/cancel":
             self._session(p).cancel()
             return None
+        if method == "_diwan/message":
+            # a message for the session, whenever: the model gets it at its next request, or
+            # it wakes an idle session (the War Room's messages between sessions use this)
+            text = str(p.get("text", "")).strip()
+            if not text:
+                raise RpcError(INVALID_PARAMS, "the message is empty")
+            return {"woke": self._session(p).runner.deliver(text)}
         raise RpcError(METHOD_NOT_FOUND, f"unknown method {method!r}")
 
     def _session(self, p: dict[str, Any]) -> AcpSession:

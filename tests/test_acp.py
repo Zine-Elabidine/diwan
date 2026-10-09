@@ -165,6 +165,19 @@ def test_only_this_folders_own_sessions_can_be_loaded(connect, tmp_path):
             client.call("session/load", {"sessionId": log.id, "cwd": str(project), "mcpServers": []})
 
 
+def test_a_message_wakes_an_idle_session(connect):
+    client, project = connect([say("first answer"), say("woken answer")])
+    sid = client.new_session(str(project))
+    client.prompt(sid, "hi")
+    client.updates.clear()
+    assert client.call("_diwan/message", {"sessionId": sid, "text": "api.py is free now"}) == {"woke": True}
+    ended = client.wait_notice("_diwan/turn_ended")
+    assert ended["params"] == {"sessionId": sid, "stopReason": "end_turn"}
+    seen = [(u["update"]["sessionUpdate"], u["update"]["content"]["text"]) for u in client.updates]
+    assert seen == [("user_message_chunk", "api.py is free now"),
+                    ("agent_message_chunk", "woken answer")]
+
+
 def test_bad_requests_get_errors_not_a_dead_server(connect, tmp_path):
     client, project = connect([])
     with pytest.raises(AcpError, match="works in"):

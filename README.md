@@ -61,7 +61,10 @@ someone else's edit from an old copy.
 stdin/stdout: an editor that supports ACP (Zed, JetBrains, Neovim) or any program can start
 sessions, send prompts, stream the answer and tool calls back, and answer approvals. One
 process holds several sessions, all in the folder it was started in, and can load earlier
-ones. MCP servers come from `~/.diwan/mcp.json`; memory is off. To try it from the terminal:
+ones. MCP servers come from `~/.diwan/mcp.json`; memory is off. A Diwan method,
+`_diwan/message`, gives a session a message at any time: during a turn the model gets it at
+its next request; an idle session wakes up and starts a turn (the War Room will use it for
+messages between sessions). To try it from the terminal:
 
 ```
 uv run python scripts/acp_client.py "list the python files here"

@@ -36,6 +36,8 @@ class Client:
         self.on_update = on_update or (lambda u: None)
         self.on_permission = on_permission or (lambda p: None)
         self.updates: list[dict[str, Any]] = []
+        self.notices: list[dict[str, Any]] = []   # other notifications (Diwan's own: _diwan/...)
+        self.noticed = threading.Condition()
         self.lines: list[str] = []          # everything received, raw: tests check it's all JSON
         self._next = 0
         self._waiting: dict[int, Future[Any]] = {}
@@ -64,6 +66,10 @@ class Client:
                 threading.Thread(target=self._permission, args=(msg,), daemon=True).start()
             elif "id" in msg:
                 self._send({"id": msg["id"], "error": {"code": -32601, "message": "not supported"}})
+            else:
+                with self.noticed:
+                    self.notices.append(msg)
+                    self.noticed.notify_all()
         for f in self._waiting.values():                  # the agent is gone
             f.set_result({"error": {"code": -1, "message": "the agent closed the connection"}})
 
@@ -97,6 +103,15 @@ class Client:
 
     def notify(self, method: str, params: dict[str, Any]) -> None:
         self._send({"method": method, "params": params})
+
+    def wait_notice(self, method: str, timeout: float = 30) -> dict[str, Any]:
+        """The first notification `method` received (waiting for it if needed)."""
+        with self.noticed:
+            ok = self.noticed.wait_for(lambda: any(n["method"] == method for n in self.notices),
+                                       timeout)
+            if not ok:
+                raise TimeoutError(method)
+            return next(n for n in self.notices if n["method"] == method)
 
     # the usual steps
     def initialize(self) -> Any:

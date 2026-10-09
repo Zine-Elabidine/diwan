@@ -242,7 +242,7 @@ Low-regret first: each step is useful even if the War Room is killed.
 1. **Stale-read check** in `write`/`edit`: refuse if the file changed since this session read it.
 2. **Sandbox `.git` fix:** make `.git` read-only in bwrap.
 3. **Server mode:** sessions as a process that a window or room can drive. *v0 done 2026-10-09:* `diwan --acp` (ACP v1: new, load, prompt, streaming, approvals, cancel), several sessions per process. Known debt: one folder per server; the client's MCP servers are ignored; no memory; load replays text only.
-4. **Waking an idle session** on a message (`send()` only queues today).
+4. **Waking an idle session** on a message. *Done 2026-10-09:* `runner.py` (`Runner.deliver`: queued during a turn, wakes an idle session, a message landing as a turn ends starts the next, messages left by a stopped turn lead the next one); in server mode as `_diwan/message` and `_diwan/turn_ended`.
 5. **The room, awareness OFF:** several sessions plus tiling.
 6. **Facts layer:** cards, the `room` tool, overlap notices, protection against git restore.
 7. **Talk and the gentle block:** `send`/`ask`/`reply`, the 3-request window, handoff, wait and wake.
