@@ -47,6 +47,23 @@ def test_the_network_can_be_cut(tmp_path):
     assert "exit code" in out and ("unreachable" in out.lower() or "error" in out.lower())
 
 
+def test_git_hooks_and_config_stay_read_only(tmp_path):
+    import subprocess
+    project = tmp_path / "project"
+    project.mkdir()
+    subprocess.run(["git", "init", "-q", str(project)], check=True)
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t"]
+    out = bash(tmp_path, f"echo 'echo pwned' > .git/hooks/pre-commit; "
+                         f"git config core.fsmonitor 'echo pwned'; "
+                         f"echo x > a.txt && git add a.txt && {' '.join(git)} commit -qm a && echo committed")
+    assert not (project / ".git" / "hooks" / "pre-commit").exists()   # no hook planted
+    assert "fsmonitor" not in (project / ".git" / "config").read_text()  # config untouched
+    assert "committed" in out                                         # git itself still works
+    log = subprocess.run(["git", "log", "--oneline"], cwd=project, capture_output=True, text=True,
+                         check=True)
+    assert log.stdout.strip().endswith(" a")
+
+
 def test_sandboxed_commands_run_without_asking(tmp_path):
     project = tmp_path / "project"
     project.mkdir()
