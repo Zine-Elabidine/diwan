@@ -17,16 +17,12 @@ from . import __version__, acp, commands, mcp, memory, sandbox, skills
 from .agent import Agent, Limits
 from .events import UIEvent
 from .log import Log
-from .models import Ref, Router
+from .models import DEFAULT_MODELS, Ref, Router
 from .paths import PathPolicy
 from .prompt import system_prompt
 from .session import Approvals, Session
 from .tools import Tool, default_tools
 from .ui import Terminal
-
-# the model used when none is given, per provider ("local" has none: say which with -m)
-DEFAULT_MODELS = {"openrouter": "deepseek/deepseek-v4-flash", "anthropic": "claude-sonnet-5-5",
-                  "deepseek": "deepseek-v4-flash", "openai": "gpt-5"}
 
 KEYS = "Ctrl-D quits. Ctrl-C stops the agent mid-turn."
 
@@ -153,6 +149,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="with --sandbox: no network for commands either")
     ap.add_argument("--no-memory", action="store_true",
                     help="don't load or save memory (Telepathy) in this session")
+    ap.add_argument("--room", action="store_true",
+                    help="several sessions on one screen, tiled, in rooms (all in this folder)")
     ap.add_argument("--acp", action="store_true",
                     help="server mode: speak the Agent Client Protocol on stdin/stdout, for an "
                          "editor or another program (no memory; MCP from ~/.diwan/mcp.json)")
@@ -192,6 +190,26 @@ def main(argv: list[str] | None = None) -> int:
     c = term.console
     try:
         ref = start_ref(args, log, router)
+    except TarjumanError as e:
+        c.print(Text(str(e), style="red"))
+        return 1
+
+    if args.room:
+        from .room import RoomApp
+        from .tui import SessionPane
+
+        def make_pane() -> SessionPane:
+            new_log = Log.new(cwd=str(cwd), provider=ref.provider, model=ref.model,
+                              diwan=__version__)
+            return SessionPane(lambda lg, at: build_agent(at, lg, term.on, term.approve, cwd,
+                                                          router, limits),
+                               new_log, cwd, router, ref, approvals=Approvals(auto=args.yes),
+                               show_reasoning=args.think)
+
+        RoomApp(make_pane).run()
+        return 0
+
+    try:
         if log is None:
             log = Log.new(cwd=str(cwd), provider=ref.provider, model=ref.model, diwan=__version__)
         session = Session(lambda lg, at: build_agent(at, lg, term.on, term.approve, cwd, router,

@@ -243,7 +243,7 @@ Low-regret first: each step is useful even if the War Room is killed.
 2. **Sandbox `.git` fix:** make `.git` read-only in bwrap.
 3. **Server mode:** sessions as a process that a window or room can drive. *v0 done 2026-10-09:* `diwan --acp` (ACP v1: new, load, prompt, streaming, approvals, cancel), several sessions per process. Known debt: one folder per server; the client's MCP servers are ignored; no memory; load replays text only.
 4. **Waking an idle session** on a message. *Done 2026-10-09:* `runner.py` (`Runner.deliver`: queued during a turn, wakes an idle session, a message landing as a turn ends starts the next, messages left by a stopped turn lead the next one); in server mode as `_diwan/message` and `_diwan/turn_ended`.
-5. **The room, awareness OFF:** several sessions plus tiling.
+5. **The room, awareness OFF:** several sessions plus tiling. *v0 done 2026-10-09:* `diwan --room` (Textual). Includes a rooms sidebar, master-stack tiling, zoom, alt+hjkl focus, a per-tile model picker, and a status bar with each session's state. Built in the terminal first, as he decided; a web UI only if the terminal feels too limited. Not yet: rooms are not saved across restarts; the room doesn't use the Runner yet.
 6. **Facts layer:** cards, the `room` tool, overlap notices, protection against git restore.
 7. **Talk and the gentle block:** `send`/`ask`/`reply`, the 3-request window, handoff, wait and wake.
 8. **Test H1 on himself** (about 5 features); later, the Phase 2 benchmark for H2.

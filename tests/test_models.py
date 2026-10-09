@@ -104,3 +104,17 @@ def test_catalog_lines():
     found = listing("deepseek v4", "openrouter")
     assert found and all(line.startswith("deepseek:") for line in found if not line.startswith("..."))
     assert "no catalog" in listing("local", "openrouter")[0]
+
+
+def test_the_picker_offers_the_current_model_listed_ones_then_defaults(tmp_path):
+    import os
+
+    from diwan.models import Ref, choices
+    home = os.environ["DIWAN_HOME"]
+    os.makedirs(home, exist_ok=True)
+    with open(os.path.join(home, "models"), "w") as f:
+        f.write("# favorites\nanthropic:claude-haiku-5-5\nopenrouter:deepseek/deepseek-v4-flash\n")
+    got = choices(Ref("openrouter", "z-ai/glm-5.3-flash"))
+    assert got[:3] == ["openrouter:z-ai/glm-5.3-flash", "anthropic:claude-haiku-5-5",
+                       "openrouter:deepseek/deepseek-v4-flash"]
+    assert len(got) == len(set(got)) and "deepseek:deepseek-v4-flash" in got

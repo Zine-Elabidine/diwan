@@ -32,6 +32,7 @@ diwan --provider anthropic --base-url <url>   # an Anthropic-compatible gateway
 diwan --context 30000               # cap the window (to see compaction early)
 diwan --no-summaries                # clear old tool outputs, but never summarize
 diwan --sandbox                     # bash in a sandbox, without approvals (Linux, bubblewrap)
+diwan --room                        # several sessions tiled on one screen, in rooms
 diwan --acp                         # server mode: driven by an editor or another program
 ```
 
@@ -54,6 +55,19 @@ that runs later, outside it, on the user's next git command); commits and branch
 `write` and `edit` refuse a file the session hasn't read, or one changed since it read it
 (by the user, another session, a command): the agent reads it again instead of overwriting
 someone else's edit from an old copy.
+
+## Rooms
+
+`diwan --room` puts several sessions on one screen, tiled like a tiling window manager: one
+fills the room, two split it, from three on the first is the master on the left and the
+others stack on the right. Rooms are listed in a sidebar; sessions keep working in rooms you
+are not looking at, and the sidebar shows a room whose session waits for your approval. All
+sessions work in the same folder, each with its own log, model and approvals; each tile has a
+model picker (the current model, those listed in `~/.diwan/models`, one `provider:model` per
+line, and each provider's default).
+
+Keys: `alt+enter` new session, `alt+h/j/k/l` move between them, `alt+f` zoom one, `alt+q`
+close it, `alt+n` new room, `alt+1..9` go to a room, `esc` stop the focused session.
 
 ## Server mode
 

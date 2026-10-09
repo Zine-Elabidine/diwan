@@ -7,12 +7,18 @@ created on first use and kept for the session."""
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from tarjuman import App, Provider, catalog, providers
 
 from .agent import Agent
 from .present import fmt_window
+
+# the model used when none is given, per provider ("local" has none: say which with -m)
+DEFAULT_MODELS = {"openrouter": "deepseek/deepseek-v4-flash", "anthropic": "claude-sonnet-5-5",
+                  "deepseek": "deepseek-v4-flash", "openai": "gpt-5"}
 
 # how providers that show the calling app (OpenRouter) name Diwan
 APP = App("Diwan", "https://github.com/Zine-Elabidine/diwan")
@@ -97,3 +103,16 @@ def listing(query: str, default_provider: str, limit: int = 20) -> list[str]:
     if len(found) > limit:
         lines.append(f"... {len(found) - limit} more; add words to narrow it")
     return lines or [f"no {provider} model matches {needle!r}"]
+
+
+def choices(current: Ref) -> list[str]:
+    """The models a picker offers: the current one, those listed in ~/.diwan/models (one
+    `provider:model` per line), then each provider's default."""
+    path = Path(os.environ.get("DIWAN_HOME", Path.home() / ".diwan")) / "models"
+    try:
+        listed = [line.strip() for line in path.read_text(encoding="utf-8").splitlines()
+                  if line.strip() and not line.startswith("#")]
+    except OSError:
+        listed = []
+    found = [str(current), *listed, *(f"{p}:{m}" for p, m in DEFAULT_MODELS.items())]
+    return list(dict.fromkeys(found))   # in order, once each

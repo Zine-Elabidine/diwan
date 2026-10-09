@@ -1,5 +1,6 @@
-"""The full-screen terminal app. The agent runs in a worker thread; its events are handed to
-the app thread, which draws them. Approvals are modal dialogs the agent thread waits on."""
+"""The full-screen terminal app: one session (DiwanApp), or several tiled in rooms (room.py).
+A session's agent runs in a worker thread; its events are handed to the app thread, which
+draws them. Approvals are modal dialogs the agent thread waits on."""
 
 from __future__ import annotations
 
@@ -19,14 +20,14 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message as TMessage
 from textual.screen import ModalScreen
-from textual.widgets import Button, Collapsible, Markdown, Static, TextArea, Tree
+from textual.widgets import Button, Collapsible, Markdown, Select, Static, TextArea, Tree
 
 from . import __version__, commands
 from .agent import Agent
 from .events import (ChildEvent, ContextCleared, ContextSummarized, Retrying, StateChanged, ToolFinished,
                      ToolStarted, TurnEnded, UIEvent, UserAdded)
 from .log import Log
-from .models import Ref, Router
+from .models import Ref, Router, choices
 from .present import (child_line, fmt_context, fmt_cost, fmt_tokens, fmt_usage, preview, short,
                       summarize_call, turn_mark)
 from .session import Approvals, Session
@@ -121,14 +122,15 @@ class Approval(ModalScreen[str]):
     BINDINGS: ClassVar = [Binding("y", "answer('yes')", "Yes"), Binding("a", "answer('always')", "Always"),
                 Binding("n", "answer('no')", "No"), Binding("escape", "answer('no')", "No")]
 
-    def __init__(self, call: ToolCall, outside: bool = False):
+    def __init__(self, call: ToolCall, outside: bool = False, who: str = ""):
         super().__init__()
-        self.call, self.outside = call, outside
+        self.call, self.outside, self.who = call, outside, who
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
             yield Static(RText.assemble(("Allow ", "bold"), (self.call.name, "bold cyan"), ("?", "bold"),
-                                        ("  outside the project" if self.outside else "", "yellow")))
+                                        ("  outside the project" if self.outside else "", "yellow"),
+                                        (f"  session {self.who}" if self.who else "", "dim")))
             with VerticalScroll(id="preview"):
                 yield Static(diff_text(self.call))
             with Horizontal(id="buttons"):
@@ -145,50 +147,57 @@ class Approval(ModalScreen[str]):
         self.dismiss(event.button.id)
 
 
-# --- the app ------------------------------------------------------------------------------------
+# --- one session --------------------------------------------------------------------------------
 
-class DiwanApp(App):
-    TITLE = "diwan"
-    CSS = """
-    Screen { layout: vertical; }
-    #top { height: 1; padding: 0 1; background: $panel; color: $text-muted; }
-    #main { height: 1fr; }
-    #chat { width: 1fr; padding: 0 1; scrollbar-size-vertical: 1; }
-    #agents { width: 32; border-left: solid $panel-lighten-2; display: none; padding: 0 1; }
-    #agents.shown { display: block; }
+class SessionPane(Vertical):
+    """One conversation on screen: a header with the model picker, the chat, the input and a
+    status line. The app shows one; a room tiles several. The agent runs in a worker thread;
+    its events are drawn on the app thread; approvals are dialogs the agent thread waits on."""
+
+    DEFAULT_CSS = """
+    SessionPane { height: 1fr; width: 1fr; }
+    SessionPane .top { height: 1; padding: 0 1; background: $panel; color: $text-muted; }
+    SessionPane .title { width: 1fr; height: 1; }
+    SessionPane.tiled .title { display: none; }
+    SessionPane.tiled .top { background: transparent; align-horizontal: right; }
+    SessionPane .model { width: 44; height: 1; }
+    SessionPane .main { height: 1fr; }
+    SessionPane .chat { width: 1fr; padding: 0 1; scrollbar-size-vertical: 1; }
+    SessionPane .agents { width: 32; border-left: solid $panel-lighten-2; display: none; padding: 0 1; }
+    SessionPane .agents.shown { display: block; }
     UserMsg { margin: 1 0 0 0; padding: 0 1; background: $boost; border-left: thick $accent; }
-    Markdown { margin: 1 0 0 0; padding: 0; }
-    Markdown > *:last-child { margin-bottom: 0; }
+    SessionPane Markdown { margin: 1 0 0 0; padding: 0; }
+    SessionPane Markdown > *:last-child { margin-bottom: 0; }
     .tool { height: auto; margin: 1 0 0 0; }
     .tool-out { padding: 0 0 0 2; }
     .more { padding: 0 0 0 1; border: none; background: transparent; }
     .reasoning { margin: 1 0 0 0; padding: 0; border: none; background: transparent; color: $text-muted; }
     Footer { color: $text-muted; margin: 1 0 0 0; }
     .notice { color: $warning; margin: 1 0 0 0; }
-    #prompt { height: auto; max-height: 10; min-height: 3; border: round $accent; margin: 0 1; }
-    #status { height: 1; padding: 0 1; color: $text-muted; }
-    Approval { align: center middle; }
-    #dialog { width: 90; max-width: 95%; height: auto; max-height: 80%; padding: 1 2;
-              border: thick $accent; background: $surface; }
-    #preview { height: auto; max-height: 24; margin: 1 0; }
-    #buttons { height: auto; align-horizontal: right; }
-    #buttons Button { margin: 0 0 0 1; }
+    SessionPane Prompt { height: auto; max-height: 10; min-height: 3; border: round $panel-lighten-2;
+                         margin: 0 1; }
+    SessionPane Prompt:focus { border: round $accent; }
+    SessionPane .status { height: 1; padding: 0 1; color: $text-muted; }
     """
-    BINDINGS: ClassVar = [
-        Binding("escape", "interrupt", "Stop", priority=True),
-        Binding("ctrl+c", "interrupt_or_hint", "Stop", priority=True, show=False),
-        Binding("ctrl+t", "toggle_think", "Reasoning"),
-        Binding("ctrl+b", "toggle_agents", "Agents"),
-        Binding("ctrl+q", "quit", "Quit"),
-    ]
+
+    class Closed(TMessage):
+        """The user closed this session (/exit)."""
+
+        def __init__(self, pane: SessionPane):
+            super().__init__()
+            self.pane = pane
 
     def __init__(self, make_agent: Callable[[Log, Ref], Agent], log: Log, cwd: Path,
                  router: Router, ref: Ref, *, approvals: Approvals | None = None,
-                 show_reasoning: bool = False, first_prompt: str | None = None):
-        super().__init__()
+                 show_reasoning: bool = False, first_prompt: str | None = None,
+                 prompt_id: str | None = None):
+        """prompt_id: an id for the input (the one-session app has one; a room's tiles don't,
+        and show less: the room shows which session and model each is)."""
+        super().__init__(classes="" if prompt_id else "tiled")
         self.cwd = cwd
         self.show_reasoning = show_reasoning
         self.first_prompt = first_prompt
+        self.prompt_id = prompt_id
 
         def wired(lg: Log, at: Ref) -> Agent:   # every agent, the first and after /new
             agent = make_agent(lg, at)
@@ -218,20 +227,28 @@ class DiwanApp(App):
     def ref(self) -> Ref:
         return self.session.ref
 
+    @property
+    def label(self) -> str:
+        """A short name for this session (status bars, dialogs)."""
+        return self.session_log.id[-6:]
+
     # --- layout -----------------------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
-        yield Static(id="top")
-        with Horizontal(id="main"):
-            yield VerticalScroll(id="chat")
-            yield Tree("agents", id="agents")
-        yield Prompt(id="prompt", soft_wrap=True, show_line_numbers=False, compact=True)
-        yield Static(id="status")
+        with Horizontal(classes="top"):
+            yield Static(classes="title")
+            yield Select([(m, m) for m in choices(self.ref)], value=str(self.ref),
+                         allow_blank=False, compact=True, classes="model")
+        with Horizontal(classes="main"):
+            yield VerticalScroll(classes="chat")
+            yield Tree("agents", classes="agents")
+        yield Prompt(id=self.prompt_id, soft_wrap=True, show_line_numbers=False, compact=True)
+        yield Static(classes="status")
 
     def on_mount(self) -> None:
-        self.chat = self.query_one("#chat", VerticalScroll)
-        self.prompt = self.query_one("#prompt", Prompt)
-        self.status = self.query_one("#status", Static)
+        self.chat = self.query_one(".chat", VerticalScroll)
+        self.prompt = self.query_one(Prompt)
+        self.status = self.query_one(".status", Static)
         self._update_top()
         self._update_agents()
         self._replay_history()
@@ -245,15 +262,19 @@ class DiwanApp(App):
         if threading.current_thread() is threading.main_thread():
             self.call_later(self.handle, ev)
         else:
-            self.call_from_thread(self.handle, ev)
+            self.app.call_from_thread(self.handle, ev)
 
     def _update_top(self) -> None:
-        self.query_one("#top", Static).update(RText.assemble(
-            ("diwan ", "bold cyan"), (f"{__version__} · ", "dim"), (str(self.ref), "bold"),
-            (f" · {self.cwd} · session {self.session_log.id}", "dim")))
+        self.query_one(".title", Static).update(RText.assemble(
+            ("diwan ", "bold cyan"), (f"{__version__} · ", "dim"),
+            (f"{self.cwd} · session {self.session_log.id}", "dim")))
+        picker: Select[str] = self.query_one(".model", Select)
+        if picker.value != str(self.ref):
+            picker.set_options([(m, m) for m in choices(self.ref)])
+            picker.value = str(self.ref)
 
     def _update_agents(self) -> None:
-        tree = self.query_one("#agents", Tree)
+        tree = self.query_one(".agents", Tree)
         tree.clear()
         tree.root.expand()
         main = tree.root.add(f"● main · {self.agent.model.split('/')[-1]} · {self.state}",
@@ -281,7 +302,8 @@ class DiwanApp(App):
                  style="dim")
         ctx, style = fmt_context(self.agent.context_use)
         t.append(f"   {ctx}", style=style)
-        t.append("   ctrl+t reasoning · ctrl+b agents · /help", style="dim")
+        if self.prompt_id:
+            t.append("   ctrl+t reasoning · ctrl+b agents · /help", style="dim")
         self.status.update(t)
 
     async def _add(self, widget) -> None:
@@ -316,7 +338,17 @@ class DiwanApp(App):
 
     @on(Prompt.Submitted)
     def _submitted(self, event: Prompt.Submitted) -> None:
+        event.stop()
         self.submit(event.text)
+
+    @on(Select.Changed, ".model")
+    def _picked(self, event: Select.Changed) -> None:
+        event.stop()
+        picker: Select[str] = self.query_one(".model", Select)
+        if event.value != str(self.ref):
+            self.command(f"/model {event.value}")
+            if picker.value != str(self.ref):   # refused (busy, missing key): put it back
+                picker.value = str(self.ref)
 
     def submit(self, text: str) -> None:
         if text.startswith("/"):
@@ -335,7 +367,7 @@ class DiwanApp(App):
     def command(self, text: str) -> None:
         reply = commands.run(self.session, text, busy=self.running)
         if reply.effect == "exit":
-            self.exit()
+            self.post_message(self.Closed(self))
             return
         if reply.effect == "think":
             self.action_toggle_think()
@@ -367,14 +399,14 @@ class DiwanApp(App):
         try:
             reason = self.agent.turn(text).reason
         finally:
-            self.call_from_thread(self._turn_done, reason)
+            self.app.call_from_thread(self._turn_done, reason)
 
     @work(thread=True, exclusive=True)
     def run_compact(self) -> None:
         try:
             self.agent.compact()
         finally:
-            self.call_from_thread(self._turn_done)
+            self.app.call_from_thread(self._turn_done)
 
     def _turn_done(self, reason: str | None = None) -> None:
         left = self.agent.take_inbox()   # typed too late for the turn: it starts the next one
@@ -382,14 +414,15 @@ class DiwanApp(App):
             # stopped on purpose: nothing starts by itself; the message waits in the input
             self.prompt.text = "\n\n".join([*left, *([self.prompt.text] if self.prompt.text else [])])
             left = []
-        if left and self.is_running:
+        if left and self.is_attached:
             text = "\n\n".join(left)
             self.chat.mount(UserMsg(RText(text)))
             self.chat.scroll_end(animate=False)
             self.run_turn(text)
             return
         self.running = False
-        self.prompt.focus()
+        if self.app.focused is None or self.app.focused is self.prompt:
+            self.prompt.focus()
 
     # --- approvals --------------------------------------------------------------------------
 
@@ -400,23 +433,24 @@ class DiwanApp(App):
         answer: Future[str] = Future()
         self._pending.add(answer)
         try:
-            self.call_from_thread(self._ask, call, outside, answer)
+            self.app.call_from_thread(self._ask, call, outside, answer)
             result = self._wait(answer)
         finally:
             self._pending.discard(answer)
         return self.session.approvals.answer(call, result, outside)
 
     def _ask(self, call: ToolCall, outside: bool, answer: Future[str]) -> None:
-        self.push_screen(Approval(call, outside), callback=lambda r: _settle(answer, r or "no"))
+        self.app.push_screen(Approval(call, outside, who=self.label),
+                             callback=lambda r: _settle(answer, r or "no"))
 
     def _wait(self, answer: Future[str]) -> str:
-        """Wait for the dialog, but never past the app's life: if the app closes (however it
+        """Wait for the dialog, but never past the pane's life: if it closes (however it
         closes), the answer is "no" and the turn stops, so the worker thread ends."""
         while True:
             try:
                 return answer.result(timeout=0.2)
             except TimeoutError:
-                if not self.is_running:
+                if not self.app.is_running or not self.is_attached:
                     self.agent.interrupt()
                     return "no"
 
@@ -429,6 +463,8 @@ class DiwanApp(App):
     # --- agent events (app thread) ----------------------------------------------------------
 
     async def handle(self, ev: UIEvent) -> None:
+        if not self.is_attached:
+            return
         if isinstance(ev, StateChanged):
             self.state = ev.state
             self._state_since = time.monotonic()
@@ -513,19 +549,10 @@ class DiwanApp(App):
 
     # --- actions ----------------------------------------------------------------------------
 
-    def action_interrupt(self) -> None:
-        if isinstance(self.screen, ModalScreen):
-            self.screen.dismiss("no")
-            return
+    def interrupt(self) -> None:
         if self.running:
             self.agent.interrupt()
             self.notify("Stopping…")
-
-    def action_interrupt_or_hint(self) -> None:
-        if self.running:
-            self.action_interrupt()
-        else:
-            self.notify("Ctrl+Q quits.")
 
     def action_toggle_think(self) -> None:
         self.show_reasoning = not self.show_reasoning
@@ -534,7 +561,105 @@ class DiwanApp(App):
         self.notify(f"reasoning {'shown' if self.show_reasoning else 'hidden'}")
 
     def action_toggle_agents(self) -> None:
-        self.query_one("#agents").toggle_class("shown")
+        self.query_one(".agents").toggle_class("shown")
+
+
+def pane_of(widget: object) -> SessionPane | None:
+    """The session a widget belongs to (the focused input's, usually)."""
+    node = widget
+    while node is not None and not isinstance(node, SessionPane):
+        node = getattr(node, "parent", None)
+    return node
+
+
+# --- the one-session app ------------------------------------------------------------------------
+
+class DiwanApp(App):
+    TITLE = "diwan"
+    CSS = """
+    Screen { layout: vertical; }
+    Approval { align: center middle; }
+    #dialog { width: 90; max-width: 95%; height: auto; max-height: 80%; padding: 1 2;
+              border: thick $accent; background: $surface; }
+    #preview { height: auto; max-height: 24; margin: 1 0; }
+    #buttons { height: auto; align-horizontal: right; }
+    #buttons Button { margin: 0 0 0 1; }
+    """
+    BINDINGS: ClassVar = [
+        Binding("escape", "interrupt", "Stop", priority=True),
+        Binding("ctrl+c", "interrupt_or_hint", "Stop", priority=True, show=False),
+        Binding("ctrl+t", "toggle_think", "Reasoning"),
+        Binding("ctrl+b", "toggle_agents", "Agents"),
+        Binding("ctrl+q", "quit", "Quit"),
+    ]
+
+    def __init__(self, make_agent: Callable[[Log, Ref], Agent], log: Log, cwd: Path,
+                 router: Router, ref: Ref, *, approvals: Approvals | None = None,
+                 show_reasoning: bool = False, first_prompt: str | None = None):
+        super().__init__()
+        self.pane = SessionPane(make_agent, log, cwd, router, ref, approvals=approvals,
+                                show_reasoning=show_reasoning, first_prompt=first_prompt,
+                                prompt_id="prompt")
+
+    # the session, as the tests and commands see it
+    @property
+    def agent(self) -> Agent:
+        return self.pane.agent
+
+    @property
+    def session(self) -> Session:
+        return self.pane.session
+
+    @property
+    def session_log(self) -> Log:
+        return self.pane.session_log
+
+    @property
+    def running(self) -> bool:
+        return self.pane.running
+
+    @property
+    def prompt(self) -> Prompt:
+        return self.pane.prompt
+
+    @property
+    def chat(self) -> VerticalScroll:
+        return self.pane.chat
+
+    @property
+    def ref(self) -> Ref:
+        return self.pane.ref
+
+    def command(self, text: str) -> None:
+        self.pane.command(text)
+
+    def submit(self, text: str) -> None:
+        self.pane.submit(text)
+
+    def compose(self) -> ComposeResult:
+        yield self.pane
+
+    @on(SessionPane.Closed)
+    def _session_closed(self) -> None:
+        self.exit()
+
+    def action_interrupt(self) -> None:
+        if isinstance(self.screen, ModalScreen):
+            self.screen.dismiss("no")
+            return
+        self.pane.interrupt()
+
+    def action_interrupt_or_hint(self) -> None:
+        if self.pane.running:
+            self.action_interrupt()
+        else:
+            self.notify("Ctrl+Q quits.")
+
+    def action_toggle_think(self) -> None:
+        self.pane.action_toggle_think()
+
+    def action_toggle_agents(self) -> None:
+        self.pane.action_toggle_agents()
 
 
 def _settle(answer: Future[str], value: str) -> None:
