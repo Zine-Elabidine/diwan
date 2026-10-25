@@ -35,20 +35,60 @@ async def settle(pilot, app, n=40):
             return
 
 
-async def test_sessions_tile_master_and_stack(tmp_path):
+async def test_a_new_session_splits_the_focused_one(tmp_path):
     app, _ = make_room(tmp_path)
     async with app.run_test(size=(160, 50)) as pilot:
         await pilot.pause()
-        assert len(app.room.panes) == 1 and app.room.styles.grid_size_columns == 1
+        (one,) = app.room.panes
+        assert one.region.width > 100                   # alone, it fills the room
         await pilot.press("alt+s")
         await pilot.pause()
-        assert app.room.styles.grid_size_columns == 2 and app.room.styles.grid_size_rows == 1
+        one, two = app.room.panes
+        assert one.region.x < two.region.x and one.region.y == two.region.y   # wide: side by side
         await pilot.press("alt+s")
         await pilot.pause()
-        first, second, third = app.room.panes
-        assert app.room.styles.grid_size_rows == 2 and first.styles.row_span == 2
-        assert first.region.x < second.region.x and second.region.y < third.region.y
-        assert app.pane is third                       # a new session gets the focus
+        one, two, three = app.room.panes
+        assert two.region.x == three.region.x and two.region.y < three.region.y   # tall: stacked
+        assert app.pane is three                       # a new session gets the focus
+
+
+async def test_dock_swap_and_drag_a_split(tmp_path):
+    from diwan.room import Bar
+    app, _ = make_room(tmp_path)
+    async with app.run_test(size=(160, 50)) as pilot:
+        await pilot.press("alt+s")
+        await pilot.press("alt+s")
+        await pilot.pause()
+        one, two, three = app.room.panes
+        app.room.dock(three, one, "bottom")            # three goes under one
+        await pilot.pause()
+        assert three.region.x == one.region.x and three.region.y > one.region.y
+        assert two.region.height > one.region.height   # two now has the whole right side
+        app.room.swap(one, two)
+        await pilot.pause()
+        assert two.region.x < one.region.x
+        bar = next(b for b in app.room.query(Bar) if b.axis == "x")
+        before = two.region.width
+        app.room.drag_split(bar, bar.region.x + 20)    # what a drag of 20 cells to the right does
+        await pilot.pause()
+        assert two.region.width >= before + 18
+
+
+async def test_dragging_a_title_onto_an_edge_docks_it(tmp_path):
+    app, _ = make_room(tmp_path)
+    async with app.run_test(size=(160, 50)) as pilot:
+        await pilot.press("alt+s")
+        await pilot.press("alt+s")
+        await pilot.pause()
+        one, _, three = app.room.panes
+        r, room = one.region, app.room.region
+        await pilot.mouse_down(app.room, offset=(three.region.x + 4 - room.x, three.region.y - room.y))
+        assert app.room._moving is three
+        app.room._track(r.x + r.width // 2, r.bottom - 2)   # over the bottom of one
+        assert app.room._target == (one, "bottom")
+        app.room.on_mouse_up(None)
+        await pilot.pause()
+        assert three.region.y > one.region.y and three.region.x == one.region.x
 
 
 async def test_move_focus_and_zoom(tmp_path):
@@ -140,5 +180,7 @@ def test_every_alt_key_reaches_the_app_as_alt():
     for b in RoomApp.BINDINGS:
         if b.key.startswith("alt+"):
             p = XTermParser()
-            keys = [getattr(e, "key", None) for e in [*p.feed("\x1b" + b.key[4:]), *p.feed("")]]
+            ch = b.key[4:]
+            ch = ch[6:].upper() if ch.startswith("shift+") else ch   # alt+shift+h is ESC H
+            keys = [getattr(e, "key", None) for e in [*p.feed("\x1b" + ch), *p.feed("")]]
             assert keys == [b.key], (b.key, keys)
