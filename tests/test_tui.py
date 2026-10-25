@@ -146,3 +146,35 @@ async def test_esc_after_queueing_puts_the_message_back(tmp_path):
         await wait_idle(pilot, app)
         assert app.prompt.text == "actually, do something else"
         assert len(app.query(UserMsg)) == 1                  # nothing was sent by itself
+
+
+@pytest.mark.asyncio
+async def test_an_edit_shows_its_diff_in_the_dialog_in_the_chat_and_on_replay(tmp_path):
+    from diwan.diffview import DiffLine, DiffView
+    (tmp_path / "m.py").write_text("a = 1\nb = 2\nc = 3\n")
+    script = [Message("assistant", [ToolCall("c0", "read", json.dumps({"path": "m.py"}))]),
+              Message("assistant", [ToolCall("c1", "edit", json.dumps({"path": "m.py", "old": "b = 2",
+                                                                       "new": "b = 20"}))]),
+              Message("assistant", [Text("done")])]
+    app = make_app(tmp_path, script)
+    async with app.run_test(size=(110, 40)) as pilot:
+        await pilot.click("#prompt")
+        await pilot.press(*"edit it", "enter")
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if isinstance(app.screen, Approval):
+                break
+        assert isinstance(app.screen, Approval)
+        assert len(app.screen.query(DiffView)) == 1   # the dialog shows the real diff
+        await pilot.press("y")
+        await wait_idle(pilot, app)
+        kinds = [d.row.kind for d in app.query(DiffLine)]
+        assert kinds.count("del") == 1 and kinds.count("add") == 1 and "ctx" in kinds   # kept in the chat
+    assert (tmp_path / "m.py").read_text() == "a = 1\nb = 20\nc = 3\n"
+
+    again = DiwanApp(lambda lg, r: Agent(Fake([]), "m", lg, default_tools(), "sys"),
+                     Log.load(app.session_log.path), tmp_path, Router("openrouter"), Ref("openrouter", "m"))
+    async with again.run_test(size=(110, 40)) as pilot:
+        await pilot.pause(0.3)
+        rows = [(d.row.kind, d.row.text) for d in again.query(DiffLine)]
+        assert ("del", "b = 2") in rows and ("add", "b = 20") in rows   # rebuilt from the file

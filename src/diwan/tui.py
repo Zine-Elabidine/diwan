@@ -15,7 +15,7 @@ from rich.text import Text as RText
 from tarjuman import (BlockEnd, BlockStart, Finish, ReasoningDelta, TextDelta,
                       ToolCall, ToolResult)
 from textual import on, work
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message as TMessage
@@ -28,16 +28,19 @@ from .events import (ChildEvent, ContextCleared, ContextSummarized, Retrying, St
                      ToolStarted, TurnEnded, UIEvent, UserAdded)
 from .log import Log
 from .models import Ref, Router, choices
+from .diff import Change, change
+from .diffview import DiffView
 from .present import (child_line, fmt_context, fmt_cost, fmt_tokens, fmt_usage, preview, short,
                       summarize_call, turn_mark)
 from .session import Approvals, Session
-from .theme import AMBER, CYAN, DIM, DIWAN, GREEN
+from .theme import ink
+from .themeui import ThemedApp
 from .tools import Tool
 
 SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 PREVIEW_LINES = 8
 
-KEYS = "Enter sends · Ctrl+J new line · Esc stops the agent · Ctrl+T reasoning · Ctrl+B agents · Ctrl+Q quits"
+KEYS = "Enter sends · Ctrl+J new line · Esc stops the agent · Ctrl+T reasoning · Ctrl+Q quits"
 
 
 # --- widgets ------------------------------------------------------------------------------------
@@ -77,26 +80,42 @@ class Footer(Static):
 
 
 class ToolView(Vertical):
-    """One tool call: a header line, then its output (long output collapses)."""
+    """One tool call: a header line, then its output (long output collapses). A `write` or
+    `edit` shows its diff instead, kept in the chat after it is applied."""
 
-    def __init__(self, call: ToolCall):
+    def __init__(self, call: ToolCall, change: Change | None = None):
         super().__init__(classes="tool")
-        self.call = call
-        self.header = Static(self._title("…", "cyan"))
+        self.call, self.change = call, change
+        self.header = Static(self._title("…", "dim"))
 
     def _title(self, mark: str, style: str) -> RText:
         t = RText()
         t.append(f"{mark} ", style=style)
+        if self.change is not None:
+            verb = "Create" if self.change.created else "Update" if self.call.name == "edit" else "Write"
+            t.append(verb, style="bold")
+            t.append(f"({self.change.path})", style=self._color("primary"))
+            return t
         t.append(self.call.name, style="bold")
         t.append(f"  {summarize_call(self.call)}")
         return t
 
+    def _color(self, name: str) -> str:
+        return getattr(self.app.current_theme, name, None) or "default" if self.is_attached else "default"
+
     def compose(self) -> ComposeResult:
         yield self.header
+        if self.change is not None:
+            yield DiffView(self.change)
+
+    def on_mount(self) -> None:
+        self.header.update(self._title("…", self._color("secondary")))
 
     def finish(self, result: ToolResult) -> None:
         self.header.update(self._title("✗" if result.is_error else "✓",
-                                       "red" if result.is_error else "green"))
+                                       self._color("error" if result.is_error else "success")))
+        if self.change is not None and not result.is_error:
+            return   # the diff says what happened
         lines = [short(line) for line in (result.text.splitlines() or [""])]
         style = "red" if result.is_error else "dim"
         head = RText("\n".join(line[:300] for line in lines[:PREVIEW_LINES]), style=style)
@@ -131,9 +150,10 @@ class Approval(ModalScreen[str]):
     BINDINGS: ClassVar = [Binding("y", "answer('yes')", "Yes"), Binding("a", "answer('always')", "Always"),
                 Binding("n", "answer('no')", "No"), Binding("escape", "answer('no')", "No")]
 
-    def __init__(self, call: ToolCall, outside: bool = False, who: str = ""):
+    def __init__(self, call: ToolCall, outside: bool = False, who: str = "",
+                 change: Change | None = None):
         super().__init__()
-        self.call, self.outside, self.who = call, outside, who
+        self.call, self.outside, self.who, self.change = call, outside, who, change
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -141,7 +161,7 @@ class Approval(ModalScreen[str]):
                                         ("  outside the project" if self.outside else "", "yellow"),
                                         (f"  session {self.who}" if self.who else "", "dim")))
             with VerticalScroll(id="preview"):
-                yield Static(diff_text(self.call))
+                yield DiffView(self.change) if self.change is not None else Static(diff_text(self.call))
             with Horizontal(id="buttons"):
                 yield Button("Yes (y)", id="yes", variant="success")
                 if not self.outside:
@@ -283,9 +303,10 @@ class SessionPane(Vertical):
             self.app.call_from_thread(self.handle, ev)
 
     def _update_top(self) -> None:
+        c = ink(self.app.current_theme)
         self.query_one(".title", Static).update(RText.assemble(
-            ("diwan ", f"bold {AMBER}"), (f"{__version__} · {self.cwd} · session {self.session_log.id}",
-                                          DIM)))
+            ("diwan ", f"bold {c.accent}"), (f"{__version__} · {self.cwd} · session {self.session_log.id}",
+                                             c.dim)))
         picker: Select[str] = self.query_one(".model", Select)
         if picker.value != str(self.ref):
             picker.set_options(_model_options(self.ref))
@@ -302,24 +323,27 @@ class SessionPane(Vertical):
 
     def _tick(self) -> None:
         self._frame += 1
+        c = ink(self.app.current_theme)
         t = RText()
-        if self.state in ("thinking", "running"):
+        if self.state in ("thinking", "running"):   # colour only on the marker, the words stay quiet
             secs = int(time.monotonic() - self._state_since)
-            t.append(f"{SPINNER[self._frame % len(SPINNER)]} {self.state}", style=CYAN)
+            t.append(SPINNER[self._frame % len(SPINNER)], style=c.secondary)
+            t.append(f" {self.state}", style=c.dim)
             if secs >= 2:
-                t.append(f" {secs}s", style=DIM)
-        elif self.state == "waiting":
-            t.append("◆ needs your approval", style=f"bold {AMBER}")
+                t.append(f" {secs}s", style=c.dim)
+        elif self.state == "waiting":   # the one state that needs you stays loud
+            t.append("◆ needs your approval", style=f"bold {c.warning}")
         else:
-            t.append("● ready", style=GREEN)
+            t.append("●", style=c.success)
+            t.append(" ready", style=c.dim)
         spent = self.agent.total
         cost = fmt_cost(spent.cost) if spent.cost is not None else "–"
         total_in = spent.input + spent.cache_read + spent.cache_write
-        t.append(f"   {fmt_tokens(total_in)} ↑ {fmt_tokens(spent.output)} ↓  {cost}", style=DIM)
+        t.append(f"   {fmt_tokens(total_in)} ↑ {fmt_tokens(spent.output)} ↓  {cost}", style=c.dim)
         ctx, style = fmt_context(self.agent.context_use)
-        t.append(f"   {ctx}", style=style if style != "dim" else DIM)
+        t.append(f"   {ctx}", style=style if style != "dim" else c.dim)
         if self.prompt_id:
-            t.append("   ctrl+t reasoning · ctrl+b agents · /help", style=DIM)
+            t.append("   ctrl+t reasoning · F2 theme · /help", style=c.dim)
         self.status.update(t)
 
     async def _add(self, widget) -> None:
@@ -344,7 +368,7 @@ class SessionPane(Vertical):
                 if m.text.strip():
                     self.chat.mount(Markdown(m.text))
                 for c in m.tool_calls:
-                    view = ToolView(c)
+                    view = ToolView(c, self._change(c, applied=c.id in results))
                     self.chat.mount(view)
                     if c.id in results:
                         view.call_after_refresh(view.finish, results[c.id])
@@ -455,8 +479,22 @@ class SessionPane(Vertical):
             self._pending.discard(answer)
         return self.session.approvals.answer(call, result, outside)
 
+    def _read(self, path: str) -> str | None:
+        """A file's text for a diff, or None (missing, too big, not text)."""
+        p = Path(path).expanduser()
+        p = p if p.is_absolute() else self.cwd / p
+        try:
+            if not p.is_file() or p.stat().st_size > 2_000_000:
+                return None
+            return p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+
+    def _change(self, call: ToolCall, applied: bool = False) -> Change | None:
+        return change(call, self._read, applied=applied)
+
     def _ask(self, call: ToolCall, outside: bool, answer: Future[str]) -> None:
-        self.app.push_screen(Approval(call, outside, who=self.label),
+        self.app.push_screen(Approval(call, outside, who=self.label, change=self._change(call)),
                              callback=lambda r: _settle(answer, r or "no"))
 
     def _wait(self, answer: Future[str]) -> str:
@@ -514,13 +552,13 @@ class SessionPane(Vertical):
             return
         if isinstance(ev, ToolStarted):
             if ev.call.id not in self._tools:
-                view = ToolView(ev.call)
+                view = ToolView(ev.call, self._change(ev.call))
                 self._tools[ev.call.id] = view
                 await self._add(view)
         elif isinstance(ev, ToolFinished):
             view = self._tools.get(ev.call.id)
             if view is None:
-                view = ToolView(ev.call)
+                view = ToolView(ev.call, self._change(ev.call, applied=True))
                 self._tools[ev.call.id] = view
                 await self._add(view)
             view.finish(ev.result)
@@ -546,11 +584,13 @@ class SessionPane(Vertical):
                                    f"(attempt {ev.attempt})", classes="notice"))
         elif isinstance(ev, TurnEnded):
             await self._close_block()
-            mark = turn_mark(ev.reason)
-            t = RText.assemble(mark, (f"  {ev.steps} step{'s' if ev.steps != 1 else ''} · "
-                                      f"{fmt_usage(ev.usage)}", "dim"))
+            c = ink(self.app.current_theme)
+            text, style = turn_mark(ev.reason)
+            style = {"green": c.success, "yellow": c.warning, "red": c.error}.get(style, style)
+            t = RText.assemble((text, style), (f"  {ev.steps} step{'s' if ev.steps != 1 else ''} · "
+                                               f"{fmt_usage(ev.usage)}", c.dim))
             if ev.error:
-                t.append(f"\n{ev.error}", style="red")
+                t.append(f"\n{ev.error}", style=c.error)
             await self._add(Footer(t))
 
     async def _close_block(self) -> None:
@@ -600,7 +640,7 @@ def pane_of(widget: object) -> SessionPane | None:
 
 # --- the one-session app ------------------------------------------------------------------------
 
-class DiwanApp(App):
+class DiwanApp(ThemedApp):
     TITLE = "diwan"
     CSS = """
     Screen { layout: vertical; }
@@ -609,16 +649,15 @@ class DiwanApp(App):
         Binding("escape", "interrupt", "Stop", priority=True),
         Binding("ctrl+c", "interrupt_or_hint", "Stop", priority=True, show=False),
         Binding("ctrl+t", "toggle_think", "Reasoning"),
-        Binding("ctrl+b", "toggle_agents", "Agents"),
         Binding("ctrl+q", "quit", "Quit"),
+        *ThemedApp.THEME_BINDINGS,
     ]
 
     def __init__(self, make_agent: Callable[[Log, Ref], Agent], log: Log, cwd: Path,
                  router: Router, ref: Ref, *, approvals: Approvals | None = None,
                  show_reasoning: bool = False, first_prompt: str | None = None):
         super().__init__()
-        self.register_theme(DIWAN)
-        self.theme = "diwan"
+        self.setup_themes()
         self.pane = SessionPane(make_agent, log, cwd, router, ref, approvals=approvals,
                                 show_reasoning=show_reasoning, first_prompt=first_prompt,
                                 prompt_id="prompt")
@@ -679,9 +718,6 @@ class DiwanApp(App):
 
     def action_toggle_think(self) -> None:
         self.pane.action_toggle_think()
-
-    def action_toggle_agents(self) -> None:
-        self.pane.action_toggle_agents()
 
 
 def _settle(answer: Future[str], value: str) -> None:
