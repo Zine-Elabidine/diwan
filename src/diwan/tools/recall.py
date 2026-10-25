@@ -5,6 +5,7 @@ exactly instead of guessed."""
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from tarjuman import Message, ToolCall
@@ -24,47 +25,72 @@ class Recall(Tool):
     description = ("Search this session's full history for exact text: earlier tool outputs "
                    "(including ones cleared to save context), files you read, commands and "
                    "errors, and messages replaced by a summary. Use it when you need an exact "
-                   "detail from earlier instead of answering from memory. Plain text, not case "
-                   "sensitive, not a regex. Returns the newest matching lines.")
+                   "detail from earlier instead of answering from memory. Give a few words, not "
+                   "case sensitive, not a regex: a line matches when the line, or the call it came "
+                   "from, contains every word (`media timeout` finds `timeout_ms = 1050` in the "
+                   "output of `diag.py media`). If no line has every word, the closest matches are "
+                   "returned. Returns the newest matching lines.")
     parameters = schema({
-        "query": {"type": "string", "description": "text to find: a name, a value, an error"}},
+        "query": {"type": "string",
+                  "description": "words to find: a name, a value, an error, where it came from"}},
         ["query"])
     readonly = True   # reads only the session log
 
     def run(self, ctx: ToolContext, query: str) -> str:
         if ctx.log is None:
             raise ToolError("no session log to search")
-        q = query.strip().lower()
-        if not q:
+        words = _words(query)
+        if not words:
             raise ToolError("the query is empty")
-        hits = search(ctx.log, q)
+        hits, matched = search(ctx.log, words)
         if not hits:
             return f"No match for {query!r} in this session."
-        out, total = [], 0
-        for h in reversed(hits[-MAX_HITS:]):   # newest first while filling, then back in order
-            if total + len(h) > MAX_CHARS:
+        # tool outputs first (they hold the exact details), newest first; then the conversation
+        ranked = sorted(range(len(hits)), key=lambda i: (not hits[i][0], -i))
+        keep, total = [], 0
+        for i in ranked[:MAX_HITS]:
+            if total + len(hits[i][1]) > MAX_CHARS:
                 break
-            out.append(h)
-            total += len(h)
-        out.reverse()
+            keep.append(i)
+            total += len(hits[i][1])
+        out = [hits[i][1] for i in sorted(keep)]   # shown in session order
         more = len(hits) - len(out)
         tail = f"\n({more} older matches not shown: use a more specific query)" if more else ""
-        return "\n".join(out) + tail
+        head = "" if matched == len(words) else \
+            f"No line has every word of {query!r}; these have {matched} of its {len(words)}.\n"
+        return head + "\n".join(out) + tail
 
 
-def search(log: Log, q: str) -> list[str]:
-    """Every line on the current branch containing `q` (lowercase), oldest first, labelled
-    with where it came from. recall's own calls and results are skipped: they only repeat
-    what was found before."""
+def search(log: Log, words: list[str]) -> tuple[list[tuple[bool, str]], int]:
+    """The lines on the current branch that match the most of `words` (lowercase), oldest
+    first, as (from a tool output, labelled line), and how many words they match. A word
+    matches where a word starts (`port` finds `port = 80`, not `report`), in the line or in its
+    label (the call that produced it); every hit has at least one in the line itself, or
+    `media` alone would return all of `diag.py media`'s output.
+    recall's own calls and results are skipped: they only repeat what was found before."""
     messages = log.messages()
     calls = {c.id: c for m in messages for c in m.tool_calls}
-    hits = []
+    pats = [re.compile(r"(?<![a-z0-9])" + re.escape(w)) for w in words]
+    scored: list[tuple[int, bool, str]] = []
     for k, m in enumerate(messages):
         for where, text in _texts(m, calls):
+            label = where.lower()
             for n, line in enumerate(text.splitlines(), 1):
-                if q in line.lower():
-                    hits.append(f"[message {k}, {where}, line {n}] {_short(line.strip())}")
-    return hits
+                low = line.lower()
+                if not any(p.search(low) for p in pats):
+                    continue
+                score = sum(bool(p.search(low) or p.search(label)) for p in pats)
+                hit = f"[message {k}, {where}, line {n}] {_short(line.strip())}"
+                scored.append((score, m.role == "tool", hit))
+    best = max((s for s, _, _ in scored), default=0)
+    # the best tool-output lines always come too: a question that repeats every word of the
+    # query would otherwise outrank the output that answers it
+    best_tool = max((s for s, tool, _ in scored if tool), default=0)
+    return [(tool, h) for s, tool, h in scored if s == best or (tool and s == best_tool)], best
+
+
+def _words(query: str) -> list[str]:
+    return list(dict.fromkeys(re.findall(r"[^\s`'\",;()]+", query.lower())))
 
 
 def _texts(m: Message, calls: dict[str, ToolCall]) -> list[tuple[str, str]]:

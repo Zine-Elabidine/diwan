@@ -37,6 +37,32 @@ def test_finds_an_output_that_was_cleared_and_summarized(tmp_path):
     assert "[message 3, your reply, line 1] Two codes are retryable." in out
 
 
+def test_words_can_match_in_the_line_or_the_call_it_came_from(tmp_path):
+    log = session(tmp_path)
+    out = recall(log, "errors.py retryable", tmp_path)   # the path is in the label, not the line
+    assert "[message 2, read errors.py output, line 2] RETRYABLE" in out
+    assert "Two codes are retryable" not in out             # matches one word of two: dropped
+    assert not out.startswith("No line has every word")
+
+
+def test_closest_matches_when_no_line_has_every_word(tmp_path):
+    log = session(tmp_path)
+    out = recall(log, "retryable timeout", tmp_path)
+    assert out.startswith("No line has every word of 'retryable timeout'; these have 1 of its 2.")
+    assert "RETRYABLE = {RATE_LIMIT, NETWORK}" in out
+
+
+def test_words_match_where_a_word_starts_and_outputs_come_first(tmp_path):
+    log = Log.new(cwd=str(tmp_path))
+    log.add_message(Message("assistant", [ToolCall("c1", "bash", '{"command": "diag search"}')]))
+    log.add_message(Message("tool", [ToolResult("c1", "report ok\nport = 48232\n")]))
+    log.add_message(Message.user("\n".join(f"what is the search port? ({i})" for i in range(30))))
+    out = recall(log, "search port", tmp_path)
+    assert "port = 48232" in out and "report ok" not in out   # the output survives 30 newer lines
+    out = recall(log, "search primary port", tmp_path)          # the questions match more words
+    assert "port = 48232" in out
+
+
 def test_skips_its_own_earlier_searches(tmp_path):
     log = session(tmp_path)
     log.add_message(Message("assistant", [ToolCall("r1", "recall", '{"query": "RETRYABLE"}')]))
