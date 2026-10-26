@@ -111,3 +111,13 @@ def _spans(old: str, new: str, side: str) -> list[tuple[str, bool]]:
         if piece:
             out.append((piece, op != "equal"))
     return out or [("", False)]
+
+
+def listing(text: str, limit: int = MAX_ROWS) -> list[Row]:
+    """A new file shown as it is: numbered lines, nothing marked as added (a diff of a new
+    file would be one wall of +)."""
+    lines = text.splitlines()
+    out = [Row("ctx", None, i + 1, [(line, False)]) for i, line in enumerate(lines[:limit])]
+    if len(lines) > limit:
+        out.append(Row("gap", spans=[(f"… {len(lines) - limit} more lines", False)]))
+    return out

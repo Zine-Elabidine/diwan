@@ -1,6 +1,7 @@
 """The full-screen terminal app: one session (DiwanApp), or several tiled in rooms (room.py).
 A session's agent runs in a worker thread; its events are handed to the app thread, which
-draws them. Approvals are modal dialogs the agent thread waits on."""
+draws them. An approval is a question shown in the chat, under the call; the agent thread
+waits for its answer."""
 
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message as TMessage
 from textual.screen import ModalScreen
-from textual.widgets import Button, Collapsible, Markdown, Select, Static, TextArea, Tree
+from textual.widgets import Collapsible, Markdown, Select, Static, TextArea, Tree
 
 from . import __version__, commands
 from .agent import Agent
@@ -30,7 +31,7 @@ from .log import Log
 from .models import Ref, Router, choices
 from .diff import Change, change
 from .diffview import DiffView
-from .present import (child_line, fmt_context, fmt_cost, fmt_tokens, fmt_usage, preview, short,
+from .present import (child_line, fmt_context, fmt_cost, fmt_tokens, fmt_usage, short,
                       summarize_call, turn_mark)
 from .session import Approvals, Session
 from .theme import ink
@@ -87,6 +88,7 @@ class ToolView(Vertical):
         super().__init__(classes="tool")
         self.call, self.change = call, change
         self.header = Static(self._title("…", "dim"))
+        self.question: Approval | None = None   # set before mounting: drawn under the diff
 
     def _title(self, mark: str, style: str) -> RText:
         t = RText()
@@ -107,6 +109,8 @@ class ToolView(Vertical):
         yield self.header
         if self.change is not None:
             yield DiffView(self.change)
+        if self.question is not None:
+            yield self.question
 
     def on_mount(self) -> None:
         self.header.update(self._title("…", self._color("secondary")))
@@ -127,53 +131,78 @@ class ToolView(Vertical):
                                    collapsed=True, classes="more"))
 
 
-def diff_text(call: ToolCall) -> RText:
-    lines = preview(call, 30)
-    if lines:
-        return RText("\n").join(RText(line, style=style) for line, style in lines)
-    try:
-        call.args()
-    except ValueError:
-        return RText(call.arguments[:2000])
-    return RText(summarize_call(call), style="bold")
+class Approval(Vertical, can_focus=True):
+    """The question under a tool call that needs your OK, inline in the chat (no pop-up):
+    numbered choices, picked with the number, the arrows and Enter, or y / a / n; Esc says no."""
 
-
-class Approval(ModalScreen[str]):
     DEFAULT_CSS = """
-    Approval { align: center middle; background: $background 60%; }
-    #dialog { width: 90; max-width: 95%; height: auto; max-height: 80%; padding: 1 2;
-              border: round $accent; background: $surface; }
-    #preview { height: auto; max-height: 24; margin: 1 0; }
-    #buttons { height: auto; align-horizontal: right; }
-    #buttons Button { margin: 0 0 0 1; }
+    Approval { height: auto; margin: 1 0 0 2; padding: 0 1; border: round $warning; }
+    Approval:focus { border: round $warning; background: $boost; }
+    Approval .question { text-style: bold; }
+    Approval .choice { color: $foreground; }
+    Approval .choice.picked { color: $warning; text-style: bold; }
+    Approval .hint { color: $text-muted; }
     """
-    BINDINGS: ClassVar = [Binding("y", "answer('yes')", "Yes"), Binding("a", "answer('always')", "Always"),
-                Binding("n", "answer('no')", "No"), Binding("escape", "answer('no')", "No")]
+    BINDINGS: ClassVar = [
+        Binding("1,y", "answer('yes')", show=False), Binding("2,a", "answer('always')", show=False),
+        Binding("3,n", "answer('no')", show=False), Binding("up", "step(-1)", show=False),
+        Binding("down", "step(1)", show=False), Binding("enter", "choose", show=False),
+    ]
 
-    def __init__(self, call: ToolCall, outside: bool = False, who: str = "",
-                 change: Change | None = None):
+    def __init__(self, call: ToolCall, outside: bool, change: Change | None,
+                 on_answer: Callable[[str], None]):
         super().__init__()
-        self.call, self.outside, self.who, self.change = call, outside, who, change
+        self.call, self.outside, self.on_answer = call, outside, on_answer
+        if change is not None:
+            what = ("create" if change.created else
+                    "overwrite" if call.name == "write" else "make this edit to")
+            self.question = f"Do you want to {what} {change.path}?"
+        elif call.name == "bash":
+            self.question = "Do you want to run this command?"
+        else:
+            self.question = f"Allow {call.name}?"
+        if outside:
+            self.question += "  (outside the project)"
+        self.choices = [("yes", "Yes")]
+        if not outside:
+            self.choices.append(("always", f"Yes, and don't ask again for {call.name} in this session"))
+        self.choices.append(("no", "No"))
+        self.picked = 0
+        self.done = False
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="dialog"):
-            yield Static(RText.assemble(("Allow ", "bold"), (self.call.name, "bold cyan"), ("?", "bold"),
-                                        ("  outside the project" if self.outside else "", "yellow"),
-                                        (f"  session {self.who}" if self.who else "", "dim")))
-            with VerticalScroll(id="preview"):
-                yield DiffView(self.change) if self.change is not None else Static(diff_text(self.call))
-            with Horizontal(id="buttons"):
-                yield Button("Yes (y)", id="yes", variant="success")
-                if not self.outside:
-                    yield Button(f"Always {self.call.name} (a)", id="always", variant="primary")
-                yield Button("No (n)", id="no", variant="error")
+        yield Static(self.question, classes="question", markup=False)
+        for i in range(len(self.choices)):
+            yield Static(classes="choice", markup=False, id=f"choice-{i}")
+        yield Static("↑↓ Enter · or press the number · Esc says no", classes="hint")
 
-    def action_answer(self, answer: str) -> None:
-        self.dismiss("yes" if answer == "always" and self.outside else answer)
+    def on_mount(self) -> None:
+        self._draw()
 
-    @on(Button.Pressed)
-    def pressed(self, event: Button.Pressed) -> None:
-        self.dismiss(event.button.id)
+    def _draw(self) -> None:
+        for i, (_, label) in enumerate(self.choices):
+            box = self.query_one(f"#choice-{i}", Static)
+            box.update(f"{'❯' if i == self.picked else ' '} {i + 1}. {label}")
+            box.set_class(i == self.picked, "picked")
+
+    def action_step(self, d: int) -> None:
+        self.picked = (self.picked + d) % len(self.choices)
+        self._draw()
+
+    def action_choose(self) -> None:
+        self.answer(self.choices[self.picked][0])
+
+    def action_answer(self, value: str) -> None:
+        if value == "always" and self.outside:
+            return   # not offered for a call that reaches outside the project
+        self.answer(value)
+
+    def answer(self, value: str) -> None:
+        if self.done:
+            return
+        self.done = True
+        self.on_answer(value)
+        self.remove()
 
 
 # --- one session --------------------------------------------------------------------------------
@@ -195,6 +224,10 @@ class SessionPane(Vertical):
               border-left: outer $accent; }
     SessionPane Markdown { margin: 1 0 0 0; padding: 0; }
     SessionPane Markdown > *:last-child { margin-bottom: 0; }
+    /* inline `code`: the theme's blue, no background (like Claude Code), not the warning yellow */
+    SessionPane MarkdownBlock:dark > .code_inline, SessionPane MarkdownBlock:light > .code_inline {
+        background: transparent !important; color: $accent !important;
+    }
     .tool { height: auto; margin: 1 0 0 0; }
     .tool-out { padding: 0 0 0 2; color: $dim; }
     .more { padding: 0 0 0 1; border: none; background: transparent; }
@@ -245,6 +278,7 @@ class SessionPane(Vertical):
         self._tools: dict[str, ToolView] = {}
         self._children: dict[str, tuple[str, str]] = {}   # child agents: id -> (task, state)
         self._pending: set[Future[str]] = set()   # approvals the agent thread is waiting on
+        self.approval: Approval | None = None       # the question shown, if one waits
 
     @property
     def agent(self) -> Agent:
@@ -494,8 +528,35 @@ class SessionPane(Vertical):
         return change(call, self._read, applied=applied)
 
     def _ask(self, call: ToolCall, outside: bool, answer: Future[str]) -> None:
-        self.app.push_screen(Approval(call, outside, who=self.label, change=self._change(call)),
-                             callback=lambda r: _settle(answer, r or "no"))
+        """Show the call (with its diff) in the chat, and the question under it. The view is
+        the one ToolStarted would make, so the diff isn't drawn twice."""
+        view = self._tools.get(call.id)
+        new = view is None
+        if view is None:
+            view = ToolView(call, self._change(call))
+            self._tools[call.id] = view
+        here = self.app.focused is None or pane_of(self.app.focused) is self
+
+        def answered(value: str) -> None:
+            self.approval = None
+            _settle(answer, value)
+            if pane_of(self.app.focused) is self or self.app.focused is None:
+                self.prompt.focus()
+
+        box = Approval(call, outside, view.change, answered)
+        self.approval = box
+        if new:
+            view.question = box
+            self.chat.mount(view)
+        else:
+            view.mount(box)
+        if here:
+            self.call_after_refresh(box.focus)
+        self.chat.call_after_refresh(self.chat.scroll_end, animate=False)
+
+    def focus_input(self) -> None:
+        """Focus what wants you: the question waiting for an answer, else the input."""
+        (self.approval or self.prompt).focus()
 
     def _wait(self, answer: Future[str]) -> str:
         """Wait for the dialog, but never past the pane's life: if it closes (however it
@@ -606,6 +667,9 @@ class SessionPane(Vertical):
     # --- actions ----------------------------------------------------------------------------
 
     def interrupt(self) -> None:
+        if self.approval is not None:   # Esc answers the question first
+            self.approval.answer("no")
+            return
         if self.running:
             self.agent.interrupt()
             self.notify("Stopping…")

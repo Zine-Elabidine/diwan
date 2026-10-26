@@ -159,7 +159,7 @@ async def test_tui_honours_approve_everything(tmp_path):
     async with app.run_test(size=(100, 30)) as pilot:
         app.submit("write it")
         await settle(pilot, app)
-        assert not isinstance(app.screen, Approval)
+        assert not app.query(Approval)
     assert (tmp_path / "x.txt").read_text() == "hi"
 
 

@@ -39,9 +39,9 @@ async def test_chat_tool_approval_and_footer(tmp_path):
         await pilot.press(*"run it", "enter")
         for _ in range(50):
             await pilot.pause(0.05)
-            if isinstance(app.screen, Approval):
+            if app.query(Approval):
                 break
-        assert isinstance(app.screen, Approval)
+        assert app.query(Approval)
         await pilot.press("y")
         await wait_idle(pilot, app)
         assert len(app.query(UserMsg)) == 1
@@ -61,7 +61,7 @@ async def test_denied_and_history_replay(tmp_path):
         await pilot.press(*"write it", "enter")
         for _ in range(50):
             await pilot.pause(0.05)
-            if isinstance(app.screen, Approval):
+            if app.query(Approval):
                 break
         await pilot.press("n")
         await wait_idle(pilot, app)
@@ -97,9 +97,9 @@ async def test_quitting_during_an_approval_lets_the_agent_thread_end(tmp_path):
         app.submit("write it")
         for _ in range(100):
             await pilot.pause(0.05)
-            if isinstance(app.screen, Approval):
+            if app.query(Approval):
                 break
-        assert isinstance(app.screen, Approval) and _waiting_on_an_approval()
+        assert app.query(Approval) and _waiting_on_an_approval()
         await pilot.press("ctrl+q")
     deadline = time.monotonic() + 3
     while _waiting_on_an_approval() and time.monotonic() < deadline:
@@ -118,7 +118,7 @@ async def test_typing_while_the_agent_works_queues_the_message(tmp_path):
         await pilot.press(*"run it", "enter")
         for _ in range(50):
             await pilot.pause(0.05)
-            if isinstance(app.screen, Approval):
+            if app.query(Approval):
                 break
         app.submit("also check the tests")          # typed while the agent waits on a tool
         await pilot.press("y")
@@ -138,7 +138,7 @@ async def test_esc_after_queueing_puts_the_message_back(tmp_path):
         await pilot.press(*"run it", "enter")
         for _ in range(50):
             await pilot.pause(0.05)
-            if isinstance(app.screen, Approval):
+            if app.query(Approval):
                 break
         app.submit("actually, do something else")
         app.agent.interrupt()
@@ -162,10 +162,10 @@ async def test_an_edit_shows_its_diff_in_the_dialog_in_the_chat_and_on_replay(tm
         await pilot.press(*"edit it", "enter")
         for _ in range(60):
             await pilot.pause(0.05)
-            if isinstance(app.screen, Approval):
+            if app.query(Approval):
                 break
-        assert isinstance(app.screen, Approval)
-        assert len(app.screen.query(DiffView)) == 1   # the dialog shows the real diff
+        assert app.query(Approval)
+        assert len(app.query(DiffView)) == 1   # the question sits under the real diff
         await pilot.press("y")
         await wait_idle(pilot, app)
         kinds = [d.row.kind for d in app.query(DiffLine)]
@@ -178,3 +178,32 @@ async def test_an_edit_shows_its_diff_in_the_dialog_in_the_chat_and_on_replay(tm
         await pilot.pause(0.3)
         rows = [(d.row.kind, d.row.text) for d in again.query(DiffLine)]
         assert ("del", "b = 2") in rows and ("add", "b = 20") in rows   # rebuilt from the file
+
+
+@pytest.mark.asyncio
+async def test_the_inline_question_answers_with_arrows_enter_and_esc(tmp_path):
+    script = [Message("assistant", [ToolCall("c1", "bash", json.dumps({"command": "echo one"}))]),
+              Message("assistant", [ToolCall("c2", "bash", json.dumps({"command": "echo two"}))]),
+              Message("assistant", [ToolCall("c3", "write", json.dumps({"path": "n.txt", "content": "x"}))]),
+              Message("assistant", [Text("done")])]
+    app = make_app(tmp_path, script)
+
+    async def question(pilot):
+        for _ in range(60):
+            await pilot.pause(0.05)
+            if app.query(Approval):
+                return app.query_one(Approval)
+        raise AssertionError("no question")
+
+    async with app.run_test(size=(110, 40)) as pilot:
+        await pilot.click("#prompt")
+        await pilot.press(*"go", "enter")
+        q = await question(pilot)
+        assert app.focused is q and not isinstance(app.screen, Approval)   # inline, focused
+        await pilot.press("down", "enter")             # 2. Yes, and don't ask again for bash
+        await pilot.pause(0.3)
+        assert "bash" in app.session.approvals.always   # so echo two runs without asking
+        await question(pilot)                           # the write still asks
+        await pilot.press("escape")                     # Esc says no
+        await wait_idle(pilot, app)
+        assert not (tmp_path / "n.txt").exists() and app.focused is app.prompt

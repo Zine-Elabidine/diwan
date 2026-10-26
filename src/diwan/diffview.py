@@ -17,7 +17,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import Static
 
-from .diff import Change, Row, rows
+from .diff import Change, Row, listing, rows
 from .theme import mix
 
 
@@ -124,11 +124,17 @@ class DiffView(Vertical):
     def __init__(self, ch: Change, **kw):
         super().__init__(**kw)
         self.change = ch
-        self.rows, self.adds, self.dels = rows(ch.before, ch.after)
+        if ch.created:   # a new file: the file itself, numbered, like an editor shows it
+            self.rows, self.adds, self.dels = listing(ch.after), len(ch.after.splitlines()), 0
+        else:
+            self.rows, self.adds, self.dels = rows(ch.before, ch.after)
 
     def compose(self) -> ComposeResult:
-        note = "  new file" if self.change.created else ""
-        yield Static(f"⎿ [$success]+{self.adds}[/] [$error]−{self.dels}[/]{note}", classes="counts")
+        if self.change.created:
+            n = self.adds
+            yield Static(f"⎿ [b]{n}[/b] line{'s' if n != 1 else ''}", classes="counts")
+        else:
+            yield Static(f"⎿ [$success]+{self.adds}[/] [$error]−{self.dels}[/]", classes="counts")
         lexer = lexer_for(self.change.path)
         for row in self.rows:
             yield DiffLine(row, lexer)

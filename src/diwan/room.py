@@ -436,7 +436,7 @@ class Room(Container):
             self.swap(moving, over)
         else:
             self.dock(moving, over, side)
-        moving.prompt.focus()
+        moving.focus_input()
 
 
 class RoomCard(Static):
@@ -613,7 +613,7 @@ class RoomApp(ThemedApp):
         self.query_one("#stage", ContentSwitcher).current = room.id
         panes = room.panes
         if panes:
-            panes[0].prompt.focus()
+            panes[0].focus_input()
         room.call_after_refresh(room.relayout)
         self._refresh_bar()
 
@@ -653,7 +653,7 @@ class RoomApp(ThemedApp):
             room.relayout()
             rest = room.panes
             if rest:
-                rest[0].prompt.focus()
+                rest[0].focus_input()
         self._refresh_bar()
 
     def action_zoom(self) -> None:
@@ -662,7 +662,7 @@ class RoomApp(ThemedApp):
             return
         room.zoomed = None if room.zoomed is pane else pane
         room.relayout()
-        pane.prompt.focus()
+        pane.focus_input()
 
     def action_layout(self) -> None:
         """F3: "focus" grows the focused session; back to "manual" evens the sizes out."""
@@ -705,13 +705,13 @@ class RoomApp(ThemedApp):
     def action_move(self, direction: str) -> None:
         best = self._neighbour(direction)
         if best is not None:
-            best.prompt.focus()
+            best.focus_input()
 
     def action_swap(self, direction: str) -> None:
         here, other = self.pane, self._neighbour(direction)
         if here is not None and other is not None:
             self.room.swap(here, other)
-            here.prompt.focus()
+            here.focus_input()
 
     def action_interrupt(self) -> None:
         if isinstance(self.screen, ModalScreen):

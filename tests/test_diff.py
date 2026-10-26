@@ -2,7 +2,7 @@ import json
 
 from tarjuman import ToolCall
 
-from diwan.diff import change, rows
+from diwan.diff import change, listing, rows
 
 FILE = "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8\ni = 9\n"
 
@@ -68,3 +68,8 @@ def test_long_diffs_are_cut_with_a_count():
     r, adds, _ = rows("", "\n".join(f"line {i}" for i in range(200)), limit=10)
     assert len(r) == 11 and r[-1].kind == "gap" and "190 more lines" in r[-1].text
     assert adds == 200
+
+
+def test_a_new_file_is_listed_not_marked_as_added():
+    r = listing("x = 1\ny = 2\n")
+    assert [(x.kind, x.new, x.text) for x in r] == [("ctx", 1, "x = 1"), ("ctx", 2, "y = 2")]

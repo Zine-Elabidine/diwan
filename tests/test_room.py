@@ -10,7 +10,7 @@ from diwan.log import Log
 from diwan.models import Ref, Router
 from diwan.room import RoomApp
 from diwan.tools import default_tools
-from diwan.tui import Approval, SessionPane, UserMsg
+from diwan.tui import Approval, SessionPane, UserMsg, pane_of
 
 
 def make_room(tmp_path, scripts=()):
@@ -164,9 +164,9 @@ async def test_an_approval_says_which_session_asks(tmp_path):
         pane.submit("write it")
         for _ in range(50):
             await pilot.pause(0.05)
-            if isinstance(app.screen, Approval):
+            if app.query(Approval):
                 break
-        assert isinstance(app.screen, Approval) and app.screen.who == pane.label
+        assert pane_of(app.query_one(Approval)) is pane   # asked inside the session that wants it
         await pilot.press("y")
         await settle(pilot, app)
         assert (tmp_path / "a.txt").read_text() == "A"
