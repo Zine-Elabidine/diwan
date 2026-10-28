@@ -23,6 +23,7 @@ from .events import (ChildEvent, ContextChanged, ContextCleared, ContextSummariz
 from .log import Kind, Log
 from .paths import Access, PathPolicy
 from .tools import Tool, ToolContext, ToolError, access
+from .watch import Watch
 
 class Interrupted(BaseException):
     """The user stopped the turn (Agent.interrupt). A BaseException, like KeyboardInterrupt, so
@@ -56,11 +57,12 @@ class Agent:
                  on: Callable[[UIEvent], None] = lambda e: None, limits: Limits | None = None,
                  sleep: Callable[[float], None] | None = None, paths: PathPolicy | None = None,
                  child: bool = False, denied: frozenset[str] = frozenset(),
-                 seen: dict[Path, str] | None = None):
+                 seen: dict[Path, str] | None = None, watch: Watch | None = None):
         """child: started by another agent (it can't start agents itself).
         denied: tools kept in the request (a fork's must match its parent's, for the cache)
         but refused when called.
-        seen: the files it has read, with their content hash (a fork starts from its parent's)."""
+        seen: the files it has read, with their content hash (a fork starts from its parent's).
+        watch: skills and memories changed since the start, told at the start of a turn."""
         self.provider, self.model, self.log, self.tools = provider, model, log, tools
         self.child, self.denied = child, denied
         # the system prompt names the model, so it is built again for each one
@@ -73,6 +75,7 @@ class Agent:
         self.paths = paths or PathPolicy(Path(log.events[0].data.get("cwd") or "."))
         self.total = Usage()
         self.seen: dict[Path, str] = seen if seen is not None else {}
+        self.watch = watch
         self._cancel = Cancel()
         self._children_usage = Usage()   # what child agents spent during the running turn
         self._lock = threading.Lock()
@@ -167,6 +170,21 @@ class Agent:
             self.on(UserAdded(text))
         return bool(texts)
 
+    def _tell_changes(self) -> None:
+        """What changed outside since the last turn, as a reminder before the user's message.
+        Not before the first message: there it would join the system prompt (the transform),
+        and nothing can have changed yet anyway."""
+        if self.watch is None or not any(m.role == "user" for m in self.log.messages()):
+            return
+        try:
+            note = self.watch.changes()
+        except Exception as e:  # informative only: a bug here must not stop the turn
+            self.log.append(Kind.ERROR, {"code": "INTERNAL", "message": f"watch: {e!r}",
+                                         "traceback": traceback.format_exc()})
+            return
+        if note:
+            self.watch.given_as(self.log.add_message(Message.system(note)))
+
     def _check_stop(self) -> None:
         if self._cancel.cancelled:
             raise Interrupted
@@ -174,6 +192,7 @@ class Agent:
     def turn(self, text: str, cancel: Cancel | None = None) -> TurnEnded:
         """cancel: a stop signal to share (a child agent stops with its parent's turn)."""
         self._cancel = cancel or Cancel()
+        self._tell_changes()
         self.log.add_message(Message.user(text))
         steps, usage = 0, Usage()
         try:
@@ -242,6 +261,8 @@ class Agent:
             self.on(ContextSummarized("nothing to summarize yet"))
             return False
         self.total += r.usage
+        if self.watch is not None:   # the reminders went with the summarized messages
+            self.watch.forget()
         self._context_changed()
         self.on(ContextSummarized(
             f"summarized {r.replaced} message{'s' if r.replaced != 1 else ''} "
@@ -404,6 +425,8 @@ class Agent:
             result = ToolResult(call.id, f"Bad arguments for {call.name}: {e}", True)
         except Exception as e:  # a tool crash must not kill the session
             result = ToolResult(call.id, f"{type(e).__name__}: {e}", True)
+        if call.name == "memory" and not result.is_error and self.watch is not None:
+            self.watch.own_save()   # it knows what it saved: no reminder for that
         self.on(ToolFinished(call, result))
         return result
 

@@ -65,6 +65,8 @@ class Session:
         a = self.agent
         if self.log.current_model() != (a.provider.provider, a.model):
             a.record_model()   # the new branch went back to before a /model: keep the current one
+        if a.watch is not None:   # notes after that point left with the old branch: tell again
+            a.watch.rewound({e.id for e in self.log.path_to_head()})
         a.context_use = a.context()
         return text
 

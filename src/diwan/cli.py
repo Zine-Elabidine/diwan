@@ -22,6 +22,7 @@ from .paths import PathPolicy
 from .prompt import system_prompt
 from .session import Approvals, Session
 from .tools import Skill, Tool, ToolSearch, default_tools
+from .watch import Watch
 from .ui import Terminal
 
 KEYS = "Ctrl-D quits. Ctrl-C stops the agent mid-turn."
@@ -59,7 +60,8 @@ def build_agent(ref: Ref, log: Log, on: Callable[[UIEvent], None],
              + mcp.prompt_section(mcp.current))
     return Agent(client, ref.model, log, tools,
                  lambda provider, model: system_prompt(cwd, model, provider) + extra,
-                 approve=approve, on=on, limits=limits, paths=paths)
+                 approve=approve, on=on, limits=limits, paths=paths,
+                 watch=Watch(cwd, mem, paths))
 
 
 def start_mcp(out: TextIO) -> None:
