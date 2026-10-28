@@ -2,13 +2,7 @@
 
 # Diwan
 
-An agent runtime that keeps a permanent record of everything your agent does, and
-speaks every model's language. Built from the loop up: no framework underneath.
-
-> A *diwan* (ديوان) was the register where everything was written down and nothing
-> erased: Caliph Umar's register of every soldier, the chancery, the council, a poet's
-> collected works. The word crossed Persian, Arabic, Turkish, Italian (*dogana*),
-> Spanish (*aduana*) and French (*douane*).
+An agent runtime.
 
 **Status:** v0 works: a terminal coding agent with nine tools (read, grep, glob, write,
 edit, bash, note, recall, agent) plus `memory` and MCP servers' tools, approvals, retries, long sessions that never run out of context,
@@ -17,6 +11,8 @@ One conversation can move between models and providers mid-session
 (`/model anthropic:claude-sonnet-5-5`, then `/model openrouter:deepseek/deepseek-v4-flash`):
 [Tarjuman](https://github.com/Zine-Elabidine/tarjuman) adapts the history, and each model's
 own reasoning comes back to it intact.
+
+![A session: DeepSeek proposes an edit, Diwan shows the diff and asks first](docs/screen-session.png)
 
 ```
 uv tool install -e ~/diwan          # once
@@ -41,6 +37,27 @@ the catalog with prices, `/rewind [n]`, `/compact [on|off]`, `/notes`, `/skills`
 Typing while the agent works queues the message: the model gets it after the current step
 (a turn about to end answers it first); Esc stops the turn instead.
 
+## The terminal app
+
+**Diffs.** Every `edit` and `write` shows a real diff in the chat, and it stays there: numbered
+lines, three lines of context, the changed words marked inside each line, syntax colours from
+the current theme. A new file shows as a numbered listing. Reopening a session rebuilds the
+diffs from the files.
+
+**Approvals.** The question sits right under the diff it is about, not in a pop-up: `1`/`y`
+yes, `2`/`a` yes for this tool for the rest of the session, `3`/`n` no (or arrows and Enter;
+Esc says no). In a room, a question doesn't take the focus from the session you are typing in.
+
+**Themes.** The defaults are Modus Vivendi Tinted (dark) and Modus Operandi Tinted (light),
+following the desktop's light/dark setting; `ctrl+l` switches. `F2` opens a picker over every
+theme: type to filter, arrows preview the theme live on the session, Enter keeps it, Esc goes
+back. Besides Diwan's own and Textual's built-ins, it reads kitty's theme collection when kitty
+has downloaded it (`~/.cache/kitty/kitty-themes.zip`) and any kitty `.conf` file in
+`~/.diwan/themes/`. They are read where they are, not bundled. The choice is saved in
+`~/.diwan/ui.json`.
+
+![The theme picker previewing gruvbox on a session](docs/screen-themes.png)
+
 ## Sandbox
 
 `--sandbox` (Linux, with bubblewrap) runs `bash` with the whole filesystem read-only except
@@ -58,17 +75,23 @@ someone else's edit from an old copy.
 
 ## Rooms
 
-`diwan --room` puts several sessions on one screen, tiled like a tiling window manager: one
-fills the room, two split it, from three on the first is the master on the left and the
-others stack on the right. Rooms are listed in a sidebar; sessions keep working in rooms you
-are not looking at, and the sidebar shows a room whose session waits for your approval. All
-sessions work in the same folder, each with its own log, model and approvals; each tile has a
-model picker (the current model, those listed in `~/.diwan/models`, one `provider:model` per
-line, and each provider's default).
+`diwan --room` puts several sessions on one screen, tiled like a tiling window manager. A new
+session splits the focused one along its longer side. Drag the bar between two tiles to
+resize them; drag a tile by its title onto another tile's edge to dock it there, or onto its
+centre to swap the two. Each tile is titled by its first message.
 
-Keys: `alt+s` new session, `alt+h/j/k/l` move between them, `alt+z` zoom one, `alt+q`
-close it, `alt+n` new room, `alt+r` / `alt+e` next / previous room (or click it), `esc` stop
-the focused session.
+Rooms are listed as cards in a sidebar: the number of sessions, one dot per session showing
+its state, and "needs you" when one waits for an approval. Sessions keep working in rooms you
+are not looking at. All sessions work in the same folder, each with its own log, model and
+approvals; each tile has a model picker (the current model, those listed in
+`~/.diwan/models`, one `provider:model` per line, and each provider's default).
+
+Keys: `alt+s` new session, `alt+q` close it, `alt+h/j/k/l` move between sessions,
+`alt+shift+h/j/k/l` swap with a neighbour, `alt+z` zoom one, `F3` switch the layout between
+manual and focus (the focused session grows), `alt+n` new room, `alt+r` / `alt+e` next /
+previous room (or click its card), `alt+w` hide the sidebar, `esc` stop the focused session.
+
+![A room: three DeepSeek sessions on one project, one waiting for an approval](docs/screen-room.png)
 
 ## Server mode
 
@@ -162,8 +185,7 @@ the task) or as a *fork*: a copy of the conversation sent exactly as the parent 
 provider's cache covers it; in a DeepSeek run its first request read 2.8k of 3.2k tokens
 from the cache. It keeps its own session log; the parent gets back only its
 final answer, so a long search costs the parent's context a few lines. Its steps show under
-the call (and in the agents panel, Ctrl+B), its cost counts in the turn, and Esc stops it
-with the parent.
+the call, its cost counts in the turn, and Esc stops it with the parent.
 
 Calls the model makes together that need no approval and change nothing (reads, searches,
 read-only child agents) run at the same time, up to eight; anything that writes or asks
