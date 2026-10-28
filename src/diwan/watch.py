@@ -1,5 +1,5 @@
 """What changed outside the conversation since the session started: skills, memories, MCP
-servers.
+servers, and the files the model read.
 
 The system prompt is built once (cache), from the skills, the memory index and the MCP servers
 as they were at the start. When they change during the session (a skill installed, a memory
@@ -23,11 +23,14 @@ import re
 from pathlib import Path
 from typing import Any
 
-from . import mcp, memory, skills
+from . import diff, mcp, memory, skills
 from .paths import PathPolicy
 from .tools import Tool
+from .tools.files import digest
 
 MAX_LINES = 20   # lines of one part of a reminder; the rest is counted
+FILE_LINES = 30  # diff lines shown per changed file
+MAX_FILES = 10   # changed files shown in one reminder
 WAIT = 10.0      # seconds to wait for servers just added to mcp.json (Claude Code waits too)
 
 
@@ -59,6 +62,13 @@ class Watch:
                  if b != n]
         self.known = now
         return "\n\n".join(parts) or None
+
+    def add(self, check: Check) -> None:
+        """One more check, from now on (the agent adds the one for the files it reads)."""
+        self.checks.append(check)
+        snap = check.snapshot()
+        self.start, self.known = [*self.start, snap], [*self.known, snap]
+        self.given = [(e, [*known, snap]) for e, known in self.given]
 
     def given_as(self, event: str) -> None:
         """The reminder from changes() was logged as `event`."""
@@ -168,6 +178,62 @@ class Servers(Check):
         lines += [f"- {n} (removed)" for n in before if n not in now]
         return ("MCP servers changed since this session started (load a server's tools with "
                 "`tool_search`):\n" + clip(lines))
+
+
+class Files(Check):
+    """Files the model read (or wrote) that changed on disk since: edited by the user, by a
+    command (its own bash too), or by another program. Told with the lines that changed, as
+    Claude Code does; `write` and `edit` still refuse them until they are read again."""
+
+    def __init__(self, project: Path, seen: dict[Path, str], texts: dict[Path, str | None]):
+        self.project, self.seen, self.texts = project, seen, texts
+
+    def snapshot(self) -> dict[str, str]:
+        """Each file whose content differs from what the model last saw: its new hash."""
+        out = {}
+        for p, seen in list(self.seen.items()):
+            try:
+                now = digest(p) if p.is_file() else "deleted"
+            except OSError:
+                now = "unreadable"
+            if now != seen:
+                out[str(p)] = now
+        return out
+
+    def note(self, before: dict[str, str], now: dict[str, str]) -> str:
+        parts = []
+        for path, h in now.items():
+            if before.get(path) == h:
+                continue
+            p = Path(path)
+            name = str(p.relative_to(self.project)) if p.is_relative_to(self.project) else path
+            if h in ("deleted", "unreadable"):
+                parts.append(f"{name}: {h}")
+                continue
+            old = self.texts.get(p)
+            try:
+                new = p.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                new = None
+            if old is None or new is None:
+                parts.append(f"{name}: changed (too big to show)")
+                continue
+            rows, adds, dels = diff.rows(old, new, context=1)
+            lines = [diff_line(r) for r in rows]
+            more = len(lines) - FILE_LINES
+            lines = lines[:FILE_LINES] + ([f"... and {more} more lines"] if more > 0 else [])
+            parts.append(f"{name} (+{adds} -{dels}):\n" + "\n".join(lines))
+        return ("Files you read changed on disk since (by the user, a command or another program). "
+                "Take this as their current state; read a file again before changing it:\n\n"
+                + "\n\n".join(parts[:MAX_FILES])
+                + (f"\n\n... and {len(parts) - MAX_FILES} more files" if len(parts) > MAX_FILES else ""))
+
+
+def diff_line(r: diff.Row) -> str:
+    if r.kind == "gap":
+        return "  ..."
+    mark, number = {"add": ("+", r.new), "del": ("-", r.old)}.get(r.kind, (" ", r.new))
+    return f"{number or '':>5} {mark} {r.text}"
 
 
 def describe(f: Path) -> str:

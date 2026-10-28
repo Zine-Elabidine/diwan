@@ -1,6 +1,7 @@
 """Skills, memories and MCP servers that change during a session reach the model as a reminder
 before its next request, at the end of the conversation (the system prompt never changes)."""
 
+import pytest
 from tarjuman import Message, Text, ToolCall
 from tarjuman.fake import Fake
 
@@ -8,7 +9,7 @@ from diwan import memory, skills
 from diwan.agent import Agent
 from diwan.log import Log
 from diwan.paths import Access, PathPolicy
-from diwan.tools import Skill, ToolContext, default_tools
+from diwan.tools import Skill, ToolContext, ToolError, default_tools
 from diwan.watch import MAX_LINES, Watch
 
 
@@ -183,3 +184,53 @@ def test_a_server_that_stopped_starts_again_on_its_next_call(tmp_path, monkeypat
         assert echo.run(ToolContext(PathPolicy(tmp_path)), text="back") == "echo: back"
     finally:
         c.close()
+
+
+# --- files the model read, changed on disk -------------------------------------------------
+
+def files_session(tmp_path, script):
+    import json
+    (tmp_path / "app.py").write_text("a = 1\nb = 2\nc = 3\n")
+    script = [Message("assistant", [ToolCall("r", "read", json.dumps({"path": "app.py"}))]), *script]
+    tools = default_tools()
+    agent = Agent(Fake(script), "m", Log.new(cwd=str(tmp_path)), tools, "sys",
+                  paths=PathPolicy(tmp_path), approve=lambda c, t, o: True,
+                  watch=Watch(tmp_path, None, home=tmp_path / "home"))
+    return agent
+
+
+def test_a_file_changed_by_the_user_is_told_with_its_lines(tmp_path):
+    agent = files_session(tmp_path, [Message("assistant", [Text("ok")])] * 3)
+    agent.turn("read it")
+    (tmp_path / "app.py").write_text("a = 1\nb = 20\nc = 3\n")
+    agent.turn("go on")
+    [note] = reminders(agent)
+    assert note.startswith("Files you read changed on disk")
+    assert "app.py (+1 -1):" in note and "    2 - b = 2" in note and "    2 + b = 20" in note
+    agent.turn("and again")
+    assert len(reminders(agent)) == 1      # told once
+    with pytest.raises(ToolError, match="changed since you last read it"):   # still read first
+        default_tools()["edit"].run(ToolContext(PathPolicy(tmp_path), seen=agent.seen),
+                                    path="app.py", old="b = 20", new="b = 3")
+
+
+def test_its_own_edits_are_not_told_but_its_own_commands_are(tmp_path):
+    import json
+    script = [Message("assistant", [ToolCall("e", "edit", json.dumps(
+                  {"path": "app.py", "old": "a = 1", "new": "a = 10"}))]),
+              Message("assistant", [ToolCall("b", "bash", json.dumps(
+                  {"command": "sed -i 's/c = 3/c = 30/' app.py"}))]),
+              Message("assistant", [Text("done")])]
+    agent = files_session(tmp_path, script)
+    agent.turn("change it")
+    [note] = reminders(agent)                 # after the sed, before the last step
+    assert "    3 + c = 30" in note and "+ a = 10" not in note   # its edit: known, not told
+    assert [m.role for m in agent.log.messages()[-3:]] == ["tool", "system", "assistant"]
+
+
+def test_a_deleted_file_is_told(tmp_path):
+    agent = files_session(tmp_path, [Message("assistant", [Text("ok")])] * 2)
+    agent.turn("read it")
+    (tmp_path / "app.py").unlink()
+    agent.turn("go on")
+    assert reminders(agent)[0].endswith("app.py: deleted")

@@ -33,6 +33,7 @@ class ToolContext:
     # file -> hash of its content when this session last read or wrote it; `write` and `edit`
     # refuse a file changed since (by the user, another session, a command). None: no checks
     seen: dict[Path, str] | None = None
+    texts: dict[Path, str | None] | None = None   # their text as last seen (None: too big to keep)
     # tools the model is told about by name only, until it loads them (tool_search)
     deferred: dict[str, Tool] | None = None
     load: Callable[[list[str]], None] | None = None   # send these deferred tools from now on

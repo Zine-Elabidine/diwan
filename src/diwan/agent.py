@@ -23,7 +23,7 @@ from .events import (ChildEvent, ContextChanged, ContextCleared, ContextSummariz
 from .log import Kind, Log
 from .paths import Access, PathPolicy
 from .tools import Tool, ToolContext, ToolError, access
-from .watch import Watch
+from .watch import Files, Watch
 
 class Interrupted(BaseException):
     """The user stopped the turn (Agent.interrupt). A BaseException, like KeyboardInterrupt, so
@@ -57,7 +57,8 @@ class Agent:
                  on: Callable[[UIEvent], None] = lambda e: None, limits: Limits | None = None,
                  sleep: Callable[[float], None] | None = None, paths: PathPolicy | None = None,
                  child: bool = False, denied: frozenset[str] = frozenset(),
-                 seen: dict[Path, str] | None = None, watch: Watch | None = None):
+                 seen: dict[Path, str] | None = None,
+                 texts: dict[Path, str | None] | None = None, watch: Watch | None = None):
         """child: started by another agent (it can't start agents itself).
         denied: tools kept in the request (a fork's must match its parent's, for the cache)
         but refused when called.
@@ -75,7 +76,10 @@ class Agent:
         self.paths = paths or PathPolicy(Path(log.events[0].data.get("cwd") or "."))
         self.total = Usage()
         self.seen: dict[Path, str] = seen if seen is not None else {}
+        self.texts: dict[Path, str | None] = dict(texts or {})
         self.watch = watch
+        if watch is not None:   # files it reads that change on disk are told too
+            watch.add(Files(self.paths.project, self.seen, self.texts))
         self._cancel = Cancel()
         self._children_usage = Usage()   # what child agents spent during the running turn
         self._lock = threading.Lock()
@@ -415,8 +419,8 @@ class Agent:
         try:
             spawn = self._spawn if "agent" in self.tools and not self.child else None
             deferred = {n: t for n, t in self.tools.items() if t.deferred} or None
-            ctx = ToolContext(self.paths, self._cancel, self.log, spawn, self.seen, deferred,
-                              self._load if deferred else None)
+            ctx = ToolContext(self.paths, self._cancel, self.log, spawn, self.seen, self.texts,
+                              deferred, self._load if deferred else None)
             result = ToolResult(call.id, tool.run(ctx, **args))
         except ToolError as e:
             result = ToolResult(call.id, str(e), True)
@@ -464,7 +468,8 @@ class Agent:
 
         child = Agent(self.provider, self.model, log, tools, system, approve=self.approve,
                       on=forward, limits=self.limits, sleep=self.sleep, paths=self.paths,
-                      child=True, denied=denied, seen=dict(self.seen) if fork else None)
+                      child=True, denied=denied, seen=dict(self.seen) if fork else None,
+                      texts=self.texts if fork else None)
         ended = child.turn(text, cancel=self._cancel)   # its end reaches the UI through `forward`
         with self._lock:                                 # children may run side by side
             self._children_usage += child.total          # counted in this turn's usage

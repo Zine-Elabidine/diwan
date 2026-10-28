@@ -72,7 +72,9 @@ that runs later, outside it, on the user's next git command); commits and branch
 
 `write` and `edit` refuse a file the session hasn't read, or one changed since it read it
 (by the user, another session, a command): the agent reads it again instead of overwriting
-someone else's edit from an old copy.
+someone else's edit from an old copy. And when a file the session read changes on disk (you
+edit it, a command rewrites it), the model is told before its next step, with the lines that
+changed.
 
 ## Rooms
 

@@ -10,13 +10,19 @@ from .base import Tool, ToolContext, ToolError, schema
 MAX_LINE = 2_000
 
 
-def _digest(p: Path) -> str:
+TEXT_KEPT_MAX = 256_000   # bytes of a file kept as last seen, to show what changed in it later
+
+
+def digest(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
 def _remember(ctx: ToolContext, p: Path) -> None:
     if ctx.seen is not None:
-        ctx.seen[p] = _digest(p)
+        data = p.read_bytes()
+        ctx.seen[p] = hashlib.sha256(data).hexdigest()
+        if ctx.texts is not None:   # watch.py shows the lines that change in it later
+            ctx.texts[p] = data.decode("utf-8", "replace") if len(data) <= TEXT_KEPT_MAX else None
 
 
 def _check_fresh(ctx: ToolContext, p: Path, path: str) -> None:
@@ -26,7 +32,7 @@ def _check_fresh(ctx: ToolContext, p: Path, path: str) -> None:
         return
     if p not in ctx.seen:
         raise ToolError(f"{path}: read it before changing it")
-    if ctx.seen[p] != _digest(p):
+    if ctx.seen[p] != digest(p):
         raise ToolError(f"{path} changed since you last read it (the user, another session or "
                         "a command); read it again before changing it")
 
