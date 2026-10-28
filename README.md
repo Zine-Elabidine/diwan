@@ -158,7 +158,10 @@ servers (with their tool counts), and the model loads the tools it needs with `t
 (keywords, or `select:<name>`), so fifty tools cost nothing until one is used. Every call asks
 for approval (server hints
 aren't trusted), and Esc cancels a running call. A server that fails to start is reported and
-the session goes on; `/mcp` lists servers and tools. Only this user-level file is read: a
+the session goes on; `/mcp` lists servers and tools. The file is followed during the session:
+a server added to it starts (and the model is told, before its next step), a removed one stops,
+and `/mcp reload` reads it again at once. A server whose process ended starts again on the next
+call to one of its tools. Only this user-level file is read: a
 project's file would let any cloned repository start programs.
 
 ## Skills

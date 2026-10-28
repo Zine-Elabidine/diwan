@@ -61,6 +61,15 @@ def _rewind(s: Session, rest: str) -> Reply:
     return Reply(text, effect="rewind")
 
 
+def _mcp(s: Session, rest: str) -> Reply:
+    if rest not in ("", "reload"):
+        return Reply("usage: /mcp [reload]", "error")
+    if rest == "reload" and mcp.current is not None:
+        mcp.current.reload()
+        mcp.current.wait()   # so the list below shows how the servers came up
+    return Reply(mcp.describe(mcp.current), "block")
+
+
 def _new(s: Session, rest: str) -> Reply:
     log = s.new()
     return Reply(f"new session {log.id}", effect="new")
@@ -78,12 +87,13 @@ COMMANDS = [
             lambda s, rest: Reply(fmt_notes(s.agent.context_manager.notes()), "block")),
     Command("compact", "[on|off]", "summarize the oldest messages now; on/off: automatic "
             "summaries when the context fills", _compact, busy_ok=lambda rest: rest in ("on", "off")),
-    Command("skills", "", "skills found at the start (.diwan/skills, .claude/skills)",
+    Command("skills", "", "skills (.diwan/skills, .claude/skills)",
             lambda s, rest: Reply(skills.describe(skills.current), "block")),
-    Command("memory", "", "this project's memory (Telepathy bundles)",
+    Command("memory", "", "this project's memory",
             lambda s, rest: Reply(memory.describe(memory.current), "block")),
-    Command("mcp", "", "MCP servers and their tools (from ~/.diwan/mcp.json)",
-            lambda s, rest: Reply(mcp.describe(mcp.current), "block")),
+    Command("mcp", "[reload]", "MCP servers and their tools (from ~/.diwan/mcp.json); reload: "
+            "read the file again now (it is also read when it changes)", _mcp,
+            busy_ok=lambda rest: True),
     Command("cost", "", "tokens and cost for this session",
             lambda s, rest: Reply(fmt_usage(s.agent.total))),
     Command("rewind", "[n]", "go back to before your last message (or the n-th last) to edit "

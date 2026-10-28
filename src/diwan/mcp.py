@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import threading
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
@@ -118,12 +119,15 @@ class _Stdio:
         return f
 
     def close(self) -> None:
+        try:
+            assert self.proc.stdin is not None
+            self.proc.stdin.close()   # also when it already ended: no pipe left half-written
+        except OSError:
+            pass
         if self.proc.poll() is None:
             try:
-                assert self.proc.stdin is not None
-                self.proc.stdin.close()
                 self.proc.wait(timeout=2)
-            except (OSError, subprocess.TimeoutExpired):
+            except subprocess.TimeoutExpired:
                 self.proc.kill()
         self._stderr.close()
 
@@ -251,6 +255,11 @@ class Server:
             self._transport.close()
             self._transport = None
 
+    def stopped(self) -> bool:
+        """A child process that has ended (an HTTP server has no process to watch)."""
+        t = self._transport
+        return t is None or (isinstance(t, _Stdio) and t.proc.poll() is not None)
+
 
 # --- as tools -----------------------------------------------------------------------------------
 
@@ -276,8 +285,7 @@ class MCPTool(Tool):
 
     def run(self, ctx: ToolContext, **args: Any) -> str:
         try:
-            result = self.server.request("tools/call", {"name": self.remote, "arguments": args},
-                                         ctx.cancel)
+            result = self._call(ctx, args)
         except MCPError as e:
             raise ToolError(f"{self.server.name}: {e}") from None
         text = content_text(result.get("content") or [])
@@ -286,6 +294,22 @@ class MCPTool(Tool):
         if not text and result.get("structuredContent") is not None:
             text = json.dumps(result["structuredContent"], ensure_ascii=False)
         return clip(text or "(no output)")
+
+
+    def _call(self, ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
+        """tools/call; a server whose process has ended is started again first, once."""
+        params = {"name": self.remote, "arguments": args}
+        try:
+            return self.server.request("tools/call", params, ctx.cancel)
+        except MCPError:
+            if not self.server.stopped():
+                raise
+        self.server.close()
+        try:
+            self.server.start()
+        except MCPError as e:
+            raise MCPError(f"the server stopped and didn't start again: {e}") from None
+        return self.server.request("tools/call", params, ctx.cancel)
 
 
 def content_text(content: list[dict[str, Any]]) -> str:
@@ -306,21 +330,103 @@ def content_text(content: list[dict[str, Any]]) -> str:
 
 @dataclass
 class Connected:
+    """The servers running, their tools, and the ones that failed. It follows mcp.json: when
+    the file changes (or on /mcp reload), new servers start in the background, removed ones
+    stop, and changed ones start again (Codex refreshes the same way, at the next turn)."""
     servers: list[Server]
     tools: dict[str, Tool]
     errors: dict[str, str]    # server name -> why it isn't there
+    path: Path | None = None  # the mcp.json followed
+    mtime: float | None = None   # its modification time when last read (None: no file)
+    config_error: str = ""    # why mcp.json itself couldn't be read
+    starting: set[str] = field(default_factory=set)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def close(self) -> None:
-        for s in self.servers:
+        with self._lock:
+            for s in self.servers:
+                s.close()
+
+    def reload_if_changed(self) -> bool:
+        """Read mcp.json again if it changed since it was last read. True if it did."""
+        mtime = modified(self.path or config_path())
+        if mtime == self.mtime:
+            return False
+        self.mtime = mtime
+        self.reload()
+        return True
+
+    def reload(self) -> None:
+        try:
+            config = load_config(self.path)
+        except MCPError as e:
+            self.config_error = str(e)
+            return
+        self.config_error = ""
+        self.sync(config)
+
+    def sync(self, config: dict[str, dict[str, Any]]) -> None:
+        """Make the running servers match `config`. Starting happens in the background."""
+        with self._lock:
+            for s in [s for s in self.servers if config.get(s.name) != s.spec]:
+                self.servers.remove(s)
+                s.close()
+                for n in [n for n, t in self.tools.items()
+                          if isinstance(t, MCPTool) and t.server is s]:
+                    del self.tools[n]
+            running = {s.name for s in self.servers} | self.starting
+            self.errors = {n: why for n, why in self.errors.items() if n in config}
+            for name, spec in config.items():
+                if name not in running:
+                    self.errors.pop(name, None)
+                    self.starting.add(name)
+                    threading.Thread(target=self._start, args=(Server(name, spec),),
+                                     daemon=True, name=f"mcp-start-{name}").start()
+
+    def _start(self, s: Server) -> None:
+        try:
+            s.start()
+        except Exception as e:  # a broken server must not stop the session
             s.close()
+            with self._lock:
+                self.starting.discard(s.name)
+                self.errors[s.name] = str(e) or type(e).__name__
+            return
+        with self._lock:
+            self.starting.discard(s.name)
+            self.servers.append(s)
+            self.tools.update(tools_of(s))
+
+    def wait(self, timeout: float = START_TIMEOUT) -> None:
+        """Until no server is still starting (for tests and /mcp reload)."""
+        end = time.monotonic() + timeout
+        while self.starting and time.monotonic() < end:
+            time.sleep(0.05)
+
+
+def modified(path: Path) -> float | None:
+    try:
+        return path.stat().st_mtime if path.is_file() else None
+    except OSError:
+        return None
+
+
+def tools_of(s: Server) -> dict[str, Tool]:
+    tools: dict[str, Tool] = {}
+    for spec in s.tools:
+        if isinstance(spec, dict) and spec.get("name"):
+            t = MCPTool(s, spec)
+            tools[t.name] = t
+    return tools
 
 
 # the servers this process started (cli.py), for /mcp
 current: Connected | None = None
 
 
-def connect(config: dict[str, dict[str, Any]]) -> Connected:
-    """Start every server at once; a server that fails is reported, not fatal."""
+def connect(config: dict[str, dict[str, Any]], path: Path | None = None) -> Connected:
+    """Start every server at once and wait for them (the session's start); a server that
+    fails is reported, not fatal. `path`: the mcp.json to follow afterwards."""
     servers = [Server(name, spec) for name, spec in config.items()]
     errors: dict[str, str] = {}
     with ThreadPoolExecutor(max(len(servers), 1)) as pool:
@@ -333,11 +439,8 @@ def connect(config: dict[str, dict[str, Any]]) -> Connected:
     up = [s for s in servers if s.name not in errors]
     tools: dict[str, Tool] = {}
     for s in up:
-        for spec in s.tools:
-            if isinstance(spec, dict) and spec.get("name"):
-                t = MCPTool(s, spec)
-                tools[t.name] = t
-    return Connected(up, tools, errors)
+        tools.update(tools_of(s))
+    return Connected(up, tools, errors, path, modified(path) if path else None)
 
 
 PROMPT = """
@@ -368,9 +471,10 @@ def prompt_section(c: Connected | None) -> str:
 
 def describe(c: Connected | None) -> str:
     """For /mcp: each server, its tools, and the ones that failed to start."""
-    if c is None or not (c.servers or c.errors):
+    if c is None or not (c.servers or c.errors or c.starting or c.config_error):
         return f"No MCP servers. Add them to {config_path()} ({{\"mcpServers\": {{...}}}})."
-    lines = []
+    lines = [f"✗ {c.config_error}"] if c.config_error else []
+    lines += [f"… {name}: starting" for name in sorted(c.starting)]
     for s in c.servers:
         names = ", ".join(t.get("name", "?") for t in s.tools) or "no tools"
         lines.append(f"● {s.name}: {names}")

@@ -1,7 +1,7 @@
-"""Skills and memories that change during a session reach the model as a reminder at the start
-of the next turn, at the end of the conversation (the system prompt never changes)."""
+"""Skills, memories and MCP servers that change during a session reach the model as a reminder
+before its next request, at the end of the conversation (the system prompt never changes)."""
 
-from tarjuman import Message, Text
+from tarjuman import Message, Text, ToolCall
 from tarjuman.fake import Fake
 
 from diwan import memory, skills
@@ -38,13 +38,13 @@ def reminders(agent):
 
 def test_a_skill_added_mid_session_is_told_once_and_can_be_loaded(tmp_path, monkeypatch):
     agent, _, home, _, paths = setup(tmp_path, monkeypatch)
-    skill(home / ".claude" / "skills" / "review", "review", "Review a diff.")
-    agent.turn("first")                    # never before the first message
+    agent.turn("first")                    # nothing changed yet
     assert reminders(agent) == []
+    skill(home / ".claude" / "skills" / "review", "review", "Review a diff.")
     agent.turn("second")
     assert reminders(agent) == ["Skills changed since this session started (load one with "
                                 "`skill`):\n+ review: Review a diff."]
-    assert agent.log.messages()[-3].role == "system"   # right before the user's message
+    assert [m.role for m in agent.log.messages()[-3:]] == ["user", "system", "assistant"]
     agent.turn("third")
     assert len(reminders(agent)) == 1      # told once
     assert "Do it." in Skill().run(ToolContext(paths), "review")
@@ -90,18 +90,96 @@ def test_a_long_change_is_cut(tmp_path, monkeypatch):
 def test_a_rewind_tells_again_only_what_left_with_the_old_branch(tmp_path, monkeypatch):
     from diwan.models import Ref, Router
     from diwan.session import Session
-    agent, project, home, _, _ = setup(tmp_path, monkeypatch, 6)
+    agent, project, home, _, _ = setup(tmp_path, monkeypatch, 7)
     agent.record_model = lambda: None      # this fake provider isn't a real model switch
     session = Session(lambda log, ref: agent, agent.log, Ref("openrouter", "m"),
                       Router("openrouter"), project)
     agent.turn("one")
     agent.turn("two")
     skill(home / ".diwan" / "skills" / "lint", "lint", "Run the linter.")
-    agent.turn("three")                    # the reminder goes right before "three"
-    assert session.rewind(1) == "three"    # back to before "three": the reminder stays
-    agent.turn("three, again")
+    agent.turn("three")                    # the reminder goes right after "three"
+    agent.turn("four")
+    assert session.rewind(1) == "four"     # back to before "four": the reminder stays
+    agent.turn("four, again")
     assert [r.count("+ lint") for r in reminders(agent)] == [1]   # not told twice
-    assert session.rewind(2) == "two"      # back to before "two": the reminder is gone
+    assert session.rewind(2) == "three"    # back to before "three": the reminder is gone
     assert reminders(agent) == []
-    agent.turn("two, again")
+    agent.turn("three, again")
     assert [r.count("+ lint") for r in reminders(agent)] == [1]   # told again
+
+
+# --- MCP servers that come and go -----------------------------------------------------------
+
+def mcp_session(tmp_path, monkeypatch, script):
+    import sys
+    from pathlib import Path
+
+    from diwan import mcp
+    from diwan.tools import ToolSearch
+    server = str(Path(__file__).parent / "fixtures" / "mcp_server.py")
+    config = mcp.config_path()
+    config.parent.mkdir(parents=True, exist_ok=True)
+    c = mcp.connect({}, config)                      # no mcp.json at the start
+    monkeypatch.setattr(mcp, "current", c)
+    tools = {**default_tools(), "tool_search": ToolSearch()}
+    agent = Agent(Fake(script), "m", Log.new(cwd=str(tmp_path)), tools, "sys",
+                  watch=Watch(tmp_path, None, tools=tools, home=tmp_path / "home"))
+
+    def write(servers):
+        import json
+        import os
+        config.write_text(json.dumps({"mcpServers": servers}))
+        os.utime(config, (0, config.stat().st_mtime + 1))   # a new time, even within a second
+        c.reload_if_changed()
+        c.wait()
+
+    return agent, c, write, {"command": sys.executable, "args": [server]}
+
+
+def test_a_server_added_mid_session_comes_deferred_and_is_told(tmp_path, monkeypatch):
+    import json
+    search = json.dumps({"query": "select:mcp__test__echo"})
+    script = [Message("assistant", [Text("ok")]),
+              Message("assistant", [ToolCall("c1", "tool_search", search)]),
+              Message("assistant", [ToolCall("c2", "mcp__test__echo", json.dumps({"text": "hi"}))]),
+              Message("assistant", [Text("done")])]
+    agent, c, write, spec = mcp_session(tmp_path, monkeypatch, script)
+    try:
+        agent.turn("first")
+        before = [d.name for d in agent.definitions()]
+        write({"test": spec, "broken": {"command": "/no/such/program"}})
+        assert [d.name for d in agent.definitions()] == before   # the tools sent: unchanged
+        agent.turn("use echo")
+        [note] = reminders(agent)
+        assert "+ test (3 tools)\n" in note and "✗ broken failed: can't start" in note
+        assert "echo: hi" in agent.log.messages()[-2].content[0].content[0].text
+    finally:
+        c.close()
+
+
+def test_a_removed_server_is_told_and_its_loaded_tools_go(tmp_path, monkeypatch):
+    agent, c, write, spec = mcp_session(tmp_path, monkeypatch, [Message("assistant", [Text("ok")])] * 2)
+    try:
+        write({"test": spec})
+        agent.turn("first")
+        agent._load(["mcp__test__echo"])
+        assert "mcp__test__echo" in [d.name for d in agent.definitions()]
+        write({})
+        agent.turn("second")
+        assert reminders(agent)[-1].endswith("- test (removed)")
+        assert "mcp__test__echo" not in [d.name for d in agent.definitions()]
+        assert not any(n.startswith("mcp__") for n in agent.tools)
+    finally:
+        c.close()
+
+
+def test_a_server_that_stopped_starts_again_on_its_next_call(tmp_path, monkeypatch):
+    _, c, write, spec = mcp_session(tmp_path, monkeypatch, [])
+    try:
+        write({"test": spec})
+        echo = c.tools["mcp__test__echo"]
+        echo.server._transport.proc.kill()
+        echo.server._transport.proc.wait()
+        assert echo.run(ToolContext(PathPolicy(tmp_path)), text="back") == "echo: back"
+    finally:
+        c.close()

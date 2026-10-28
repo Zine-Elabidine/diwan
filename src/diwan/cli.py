@@ -54,26 +54,24 @@ def build_agent(ref: Ref, log: Log, on: Callable[[UIEvent], None],
     tools = {**default_tools(sandbox.current), **({"memory": memory.Remember()} if mem else {}),
              **(mcp.current.tools if mcp.current else {})}
     tools["skill"] = Skill()   # always: a skill added mid-session can be loaded too
-    if any(t.deferred for t in tools.values()):
-        tools["tool_search"] = ToolSearch()
+    tools["tool_search"] = ToolSearch()   # always: so can an MCP server's tools
     extra = (skills.prompt_section(skills.current) + (memory.prompt_section(mem) if mem else "")
              + mcp.prompt_section(mcp.current))
     return Agent(client, ref.model, log, tools,
                  lambda provider, model: system_prompt(cwd, model, provider) + extra,
                  approve=approve, on=on, limits=limits, paths=paths,
-                 watch=Watch(cwd, mem, paths))
+                 watch=Watch(cwd, mem, paths, tools=tools))
 
 
 def start_mcp(out: TextIO) -> None:
-    """Start the servers in ~/.diwan/mcp.json; problems are printed, never fatal."""
+    """Start the servers in ~/.diwan/mcp.json; problems are printed, never fatal. Even with no
+    servers it follows the file, so a server added during the session starts then."""
     try:
         config = mcp.load_config()
     except mcp.MCPError as e:
         print(f"MCP: {e}", file=out)
-        return
-    if not config:
-        return
-    mcp.current = mcp.connect(config)
+        config = {}
+    mcp.current = mcp.connect(config, mcp.config_path())
     atexit.register(mcp.current.close)
     for name, why in mcp.current.errors.items():
         print(f"MCP server {name!r} didn't start: {why}", file=out)

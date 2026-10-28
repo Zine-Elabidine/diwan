@@ -171,10 +171,9 @@ class Agent:
         return bool(texts)
 
     def _tell_changes(self) -> None:
-        """What changed outside since the last turn, as a reminder before the user's message.
-        Not before the first message: there it would join the system prompt (the transform),
-        and nothing can have changed yet anyway."""
-        if self.watch is None or not any(m.role == "user" for m in self.log.messages()):
+        """What changed outside since the model was last told, as a reminder before its next
+        request (so a server that finishes starting mid-turn is known at the next step)."""
+        if self.watch is None:
             return
         try:
             note = self.watch.changes()
@@ -192,7 +191,6 @@ class Agent:
     def turn(self, text: str, cancel: Cancel | None = None) -> TurnEnded:
         """cancel: a stop signal to share (a child agent stops with its parent's turn)."""
         self._cancel = cancel or Cancel()
-        self._tell_changes()
         self.log.add_message(Message.user(text))
         steps, usage = 0, Usage()
         try:
@@ -202,6 +200,7 @@ class Agent:
                     return self._end("max_steps", steps, usage)
                 if steps:
                     self._deliver()
+                self._tell_changes()
                 steps += 1
                 msg = self._sample()
                 usage += msg.usage or Usage()
