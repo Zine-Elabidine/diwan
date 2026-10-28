@@ -21,7 +21,7 @@ from .models import DEFAULT_MODELS, Ref, Router
 from .paths import PathPolicy
 from .prompt import system_prompt
 from .session import Approvals, Session
-from .tools import Tool, default_tools
+from .tools import Tool, ToolSearch, default_tools
 from .ui import Terminal
 
 KEYS = "Ctrl-D quits. Ctrl-C stops the agent mid-turn."
@@ -52,7 +52,10 @@ def build_agent(ref: Ref, log: Log, on: Callable[[UIEvent], None],
                                       *skills.readable(skills.current)])
     tools = {**default_tools(sandbox.current), **({"memory": memory.Remember()} if mem else {}),
              **(mcp.current.tools if mcp.current else {})}
-    extra = skills.prompt_section(skills.current) + (memory.prompt_section(mem) if mem else "")
+    if any(t.deferred for t in tools.values()):
+        tools["tool_search"] = ToolSearch()
+    extra = (skills.prompt_section(skills.current) + (memory.prompt_section(mem) if mem else "")
+             + mcp.prompt_section(mcp.current))
     return Agent(client, ref.model, log, tools,
                  lambda provider, model: system_prompt(cwd, model, provider) + extra,
                  approve=approve, on=on, limits=limits, paths=paths)

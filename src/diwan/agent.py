@@ -14,6 +14,7 @@ from typing import Any
 from tarjuman import (BlockEnd, BlockStart, Cancel, Event, Finish, Message, Provider, Reasoning,
                       ReasoningDelta, Replay, TarjumanError, Text, TextDelta, ToolCall,
                       ToolCallDelta, ToolResult, Unknown, Usage, errors)
+from tarjuman import Tool as Definition
 
 from . import clearing, prompt, summary
 from .context import ContextManager, ContextUse
@@ -104,8 +105,23 @@ class Agent:
         provider, model = provider or self.provider, model or self.model
         current = (provider.provider, model) == (self.provider.provider, self.model)
         system = self.system if current else self._prompt(provider.provider, model)
-        tools = [t.definition for t in self.tools.values()]
+        tools = self.definitions()
         return self.context_manager.measure(system, tools, provider, model)
+
+    def definitions(self) -> list[Definition]:
+        """The tools sent in a request: every tool that isn't deferred, then the deferred ones
+        loaded on this branch, in load order (a stable list, for the cache)."""
+        loaded = self.log.loaded_tools()
+        return ([t.definition for t in self.tools.values() if not t.deferred]
+                + [self.tools[n].definition for n in loaded if n in self.tools])
+
+    def _load(self, names: list[str]) -> None:
+        """tool_search's capability: send these deferred tools from the next request on."""
+        with self._lock:
+            new = [n for n in names if n in self.tools and self.tools[n].deferred
+                   and n not in self.log.loaded_tools()]
+            if new:
+                self.log.append(Kind.TOOLS_LOADED, {"names": new})
 
     def _context_changed(self) -> None:
         try:
@@ -212,7 +228,7 @@ class Agent:
         unsummarized; an interrupt stops the turn as usual. True when a summary was logged."""
         before = self.context_use.used
         try:
-            in_place = (self.system, [t.definition for t in self.tools.values()]) \
+            in_place = (self.system, self.definitions()) \
                 if self.limits.in_place else None
             r = self.context_manager.summarize(self.context_use, self.provider, self.model,
                                                self._cancel, in_place, everything)
@@ -246,7 +262,7 @@ class Agent:
         self._maybe_clear()
         self._maybe_summarize()
         messages = [Message.system(self.system), *self.context_manager.view()]
-        tools = [t.definition for t in self.tools.values()]
+        tools = self.definitions()
         attempt, squeezed = 0, False
         while True:
             self.on(StateChanged("thinking"))
@@ -348,8 +364,11 @@ class Agent:
 
     def _run_one(self, call: ToolCall) -> ToolResult:
         tool = self.tools.get(call.name)
+        if tool is not None and tool.deferred and call.name not in self.log.loaded_tools():
+            return ToolResult(call.id, f"`{call.name}` is not loaded yet: load it with "
+                                       f"tool_search (select:{call.name}) first.", True)
         if tool is None or call.name in self.denied:
-            usable = [n for n in self.tools if n not in self.denied]
+            usable = [n for n in self.tools if n not in self.denied and not self.tools[n].deferred]
             return ToolResult(call.id, f"Unknown tool `{call.name}`. Available: "
                                        f"{', '.join(usable)}", True)
         try:
@@ -375,7 +394,9 @@ class Agent:
         self.on(ToolStarted(call))
         try:
             spawn = self._spawn if "agent" in self.tools and not self.child else None
-            ctx = ToolContext(self.paths, self._cancel, self.log, spawn, self.seen)
+            deferred = {n: t for n, t in self.tools.items() if t.deferred} or None
+            ctx = ToolContext(self.paths, self._cancel, self.log, spawn, self.seen, deferred,
+                              self._load if deferred else None)
             result = ToolResult(call.id, tool.run(ctx, **args))
         except ToolError as e:
             result = ToolResult(call.id, str(e), True)
@@ -398,6 +419,8 @@ class Agent:
             # the last request's messages: the view without the reply that holds this call
             for m in self.context_manager.view()[:-1]:
                 log.add_message(m)
+            if self.log.loaded_tools():   # the same tool list as the parent's, for the cache
+                log.append(Kind.TOOLS_LOADED, {"names": self.log.loaded_tools()})
             tools = self.tools
             denied = frozenset({"agent"} | ({n for n, t in tools.items() if not t.readonly}
                                             if readonly else set()))

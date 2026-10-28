@@ -182,6 +182,7 @@ class Server:
     name: str
     spec: dict[str, Any]
     tools: list[dict[str, Any]] = field(default_factory=list)   # as tools/list gave them
+    instructions: str = ""    # what the server says about itself when initialized
     _transport: _Stdio | _HTTP | None = None
     _next: int = 0
 
@@ -193,9 +194,10 @@ class Server:
             self._transport = _Stdio(self.name, self.spec)
         else:
             raise MCPError("needs a \"command\" or a \"url\"")
-        self.request("initialize", {"protocolVersion": PROTOCOL, "capabilities": {},
-                                    "clientInfo": {"name": "diwan", "version": __version__}},
-                     timeout=START_TIMEOUT)
+        init = self.request("initialize", {"protocolVersion": PROTOCOL, "capabilities": {},
+                                           "clientInfo": {"name": "diwan", "version": __version__}},
+                            timeout=START_TIMEOUT)
+        self.instructions = str(init.get("instructions") or "").strip()
         self.notify("notifications/initialized")
         tools, cursor = [], None
         while True:
@@ -260,8 +262,10 @@ def tool_name(server: str, tool: str) -> str:
 
 class MCPTool(Tool):
     """One server tool. Never read-only: hints from a server are not trusted, so every call
-    asks for approval (or "always", per tool)."""
+    asks for approval (or "always", per tool). Deferred: the model sees only the server's
+    name until it loads the tool with tool_search."""
     readonly = False
+    deferred = True
 
     def __init__(self, server: Server, spec: dict[str, Any]):
         self.server, self.remote = server, spec["name"]
@@ -334,6 +338,32 @@ def connect(config: dict[str, dict[str, Any]]) -> Connected:
                 t = MCPTool(s, spec)
                 tools[t.name] = t
     return Connected(up, tools, errors)
+
+
+PROMPT = """
+
+# MCP tools
+
+These servers' tools are not loaded yet: you see only the servers. Before calling one of their
+tools, load it with `tool_search` (keywords, or `select:<exact name>`); it can be called from
+the next step on.
+{lines}"""
+
+SERVER_LINE_MAX = 200   # characters of a server's own instructions shown in the listing
+
+
+def prompt_section(c: Connected | None) -> str:
+    """The servers whose tools are deferred, with how many tools each has."""
+    if c is None:
+        return ""
+    lines = []
+    for s in c.servers:
+        n = sum(1 for t in c.tools.values() if isinstance(t, MCPTool) and t.server is s)
+        if not n:
+            continue
+        about = s.instructions.splitlines()[0][:SERVER_LINE_MAX] if s.instructions else ""
+        lines.append(f"- {s.name} ({n} tool{'s' if n != 1 else ''})" + (f": {about}" if about else ""))
+    return PROMPT.format(lines="\n".join(lines)) if lines else ""
 
 
 def describe(c: Connected | None) -> str:

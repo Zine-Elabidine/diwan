@@ -34,6 +34,7 @@ class Kind(StrEnum):
     ERROR = "error"                # a failed request or an internal error; never sent
     TURN_END = "turn_end"          # why a turn stopped, its steps and usage
     REWIND = "rewind"              # the user went back: later events continue from its parent
+    TOOLS_LOADED = "tools_loaded"  # deferred tools the model loaded (tool_search): sent from now on
 
 
 @dataclass
@@ -64,6 +65,7 @@ class _Branch:
     masked: dict[str, str] = field(default_factory=dict)
     mask_points: list[int] = field(default_factory=list)
     summary: Summary | None = None   # the latest one: each summary covers the ones before it
+    loaded: list[str] = field(default_factory=list)   # deferred tools loaded, in load order
 
     def add(self, e: Event) -> None:
         if e.type == Kind.MESSAGE:
@@ -74,6 +76,8 @@ class _Branch:
         elif e.type == Kind.SUMMARY:
             self.summary = Summary(e.data["cut"], e.data["text"], len(self.messages),
                                    e.data.get("model_text", e.data["text"]))
+        elif e.type == Kind.TOOLS_LOADED:
+            self.loaded += [n for n in e.data["names"] if n not in self.loaded]
         self.head = e.id
 
 
@@ -167,6 +171,10 @@ class Log:
     def summary(self) -> Summary | None:
         """The latest "summary" event on this branch, if any."""
         return self._branch().summary
+
+    def loaded_tools(self) -> list[str]:
+        """The deferred tools loaded on this branch, in the order they were loaded."""
+        return list(self._branch().loaded)
 
     def rewind(self, n: int = 1) -> str | None:
         """Go back to just before the user's n-th last message, and return that message's text

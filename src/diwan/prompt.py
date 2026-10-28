@@ -26,8 +26,8 @@ are, so they are how you remember what you decided. When you need an exact detai
 (a value, a line, an error) that is no longer in front of you, search for it with `recall`
 instead of answering from memory.
 
-Tools named mcp__<server>__<tool> come from MCP servers the user added; each call asks the
-user first.
+Tools named mcp__<server>__<tool> come from MCP servers the user added. They are not loaded at
+first: load the ones you need with `tool_search`. Each call asks the user first.
 
 For a self-contained part of the work whose steps you don't need to see (searching a large
 codebase, answering a question about it), use `agent`: a fresh agent does it and you get only

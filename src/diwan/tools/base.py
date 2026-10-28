@@ -33,6 +33,9 @@ class ToolContext:
     # file -> hash of its content when this session last read or wrote it; `write` and `edit`
     # refuse a file changed since (by the user, another session, a command). None: no checks
     seen: dict[Path, str] | None = None
+    # tools the model is told about by name only, until it loads them (tool_search)
+    deferred: dict[str, Tool] | None = None
+    load: Callable[[list[str]], None] | None = None   # send these deferred tools from now on
 
     @property
     def cwd(self) -> Path:
@@ -53,6 +56,7 @@ class Tool:
     readonly: bool = False           # runs without approval inside the project
     auto: bool = False               # changes things, but is confined: runs without approval
     path_arg: str | None = None      # the argument holding a path, checked by the path policy
+    deferred: bool = False           # left out of requests until tool_search loads it
     run: Callable[..., str]
 
     @property
