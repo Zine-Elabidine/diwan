@@ -15,6 +15,7 @@ from tarjuman import (BlockEnd, BlockStart, Cancel, Event, Finish, Message, Prov
                       ReasoningDelta, Replay, TarjumanError, Text, TextDelta, ToolCall,
                       ToolCallDelta, ToolResult, Unknown, Usage, errors)
 from tarjuman import Tool as Definition
+from tarjuman import ToolsAdded
 
 from . import clearing, prompt, summary
 from .context import ContextManager, ContextUse
@@ -83,6 +84,7 @@ class Agent:
         self._cancel = Cancel()
         self._children_usage = Usage()   # what child agents spent during the running turn
         self._lock = threading.Lock()
+        self._loading: list[str] = []   # deferred tools loaded during the running step
         self._inbox: list[str] = []   # typed while a turn runs: given to the model at the next step
         self._inbox_lock = threading.Lock()
         self.context_manager = ContextManager(log, self.limits.max_tokens, self.limits.context)
@@ -116,19 +118,27 @@ class Agent:
         return self.context_manager.measure(system, tools, provider, model)
 
     def definitions(self) -> list[Definition]:
-        """The tools sent in a request: every tool that isn't deferred, then the deferred ones
-        loaded on this branch, in load order (a stable list, for the cache)."""
-        loaded = self.log.loaded_tools()
+        """The tools sent in a request: those the model sees, then the deferred ones, in a
+        stable order (servers added mid-session at the end). Which deferred tools it sees is
+        Tarjuman's to say, from the ToolsAdded messages: on Anthropic the list never changes."""
         return ([t.definition for t in self.tools.values() if not t.deferred]
-                + [self.tools[n].definition for n in loaded if n in self.tools])
+                + [t.definition for t in self.tools.values() if t.deferred])
 
     def _load(self, names: list[str]) -> None:
-        """tool_search's capability: send these deferred tools from the next request on."""
+        """tool_search's capability: the model may call these deferred tools from its next step
+        on. Logged by _flush_loads, after the step's tool results (a call and its result stay
+        side by side in the log)."""
         with self._lock:
-            new = [n for n in names if n in self.tools and self.tools[n].deferred
-                   and n not in self.log.loaded_tools()]
-            if new:
-                self.log.append(Kind.TOOLS_LOADED, {"names": new})
+            self._loading += [n for n in names if n in self.tools and self.tools[n].deferred
+                              and n not in self.log.loaded_tools() and n not in self._loading]
+
+    def _flush_loads(self) -> None:
+        """The tools loaded during this step, as one ToolsAdded message (Tarjuman tells the
+        model where its protocol allows)."""
+        with self._lock:
+            if self._loading:
+                self.log.add_message(Message("system", [ToolsAdded(self._loading)]))
+                self._loading = []
 
     def _context_changed(self) -> None:
         try:
@@ -372,6 +382,7 @@ class Agent:
             # unanswered calls get a synthetic error when the history is sent
             if results:
                 self.log.add_message(Message("tool", [*results]))
+            self._flush_loads()
 
     def _parallel_ok(self, call: ToolCall) -> bool:
         """Whether a call may run alongside others: read-only, inside what's allowed without
@@ -445,8 +456,6 @@ class Agent:
             # the last request's messages: the view without the reply that holds this call
             for m in self.context_manager.view()[:-1]:
                 log.add_message(m)
-            if self.log.loaded_tools():   # the same tool list as the parent's, for the cache
-                log.append(Kind.TOOLS_LOADED, {"names": self.log.loaded_tools()})
             tools = self.tools
             denied = frozenset({"agent"} | ({n for n, t in tools.items() if not t.readonly}
                                             if readonly else set()))

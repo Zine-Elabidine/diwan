@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from tarjuman import Cancel
+from tarjuman import Cancel, tokens
 
 from . import __version__
 from .log import sessions_dir
@@ -271,8 +271,8 @@ def tool_name(server: str, tool: str) -> str:
 
 class MCPTool(Tool):
     """One server tool. Never read-only: hints from a server are not trusted, so every call
-    asks for approval (or "always", per tool). Deferred: the model sees only the server's
-    name until it loads the tool with tool_search."""
+    asks for approval (or "always", per tool). Deferred (unless the servers' tools are few, see
+    `connect`): the model sees only its name until it loads the tool with tool_search."""
     readonly = False
     deferred = True
 
@@ -297,19 +297,30 @@ class MCPTool(Tool):
 
 
     def _call(self, ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
-        """tools/call; a server whose process has ended is started again first, once."""
+        """tools/call. A server whose process has ended is started again first. One that ends
+        during the call is started again too, but the call is not sent twice: it may have run
+        before the server stopped (an issue created, a message sent)."""
         params = {"name": self.remote, "arguments": args}
+        if self.server.stopped():
+            self._restart()
+            return self.server.request("tools/call", params, ctx.cancel)
         try:
             return self.server.request("tools/call", params, ctx.cancel)
         except MCPError:
             if not self.server.stopped():
                 raise
+        self._restart()
+        raise MCPError("the server stopped during the call and was started again; the call may "
+                       "or may not have run: check before calling it again")
+
+    def _restart(self) -> None:
+        if current is not None and self.server not in current.servers:
+            raise MCPError("this server was removed from mcp.json")
         self.server.close()
         try:
             self.server.start()
         except MCPError as e:
             raise MCPError(f"the server stopped and didn't start again: {e}") from None
-        return self.server.request("tools/call", params, ctx.cancel)
 
 
 def content_text(content: list[dict[str, Any]]) -> str:
@@ -440,32 +451,63 @@ def connect(config: dict[str, dict[str, Any]], path: Path | None = None) -> Conn
     tools: dict[str, Tool] = {}
     for s in up:
         tools.update(tools_of(s))
+    if size(tools) <= DEFER_ABOVE:   # few: shown from the start, no search needed
+        for t in tools.values():
+            t.deferred = False
     return Connected(up, tools, errors, path, modified(path) if path else None)
+
+
+# Tools of the servers there at the start are deferred (found with tool_search) only when their
+# definitions are big: below about 10k tokens a search step costs more than it saves (the size
+# Anthropic's cost guide gives). Servers added mid-session are always deferred: sending them
+# would change the tools sent, and with them the whole cache.
+DEFER_ABOVE = 10_000
+
+
+def size(tools: dict[str, Tool]) -> int:
+    """About how many tokens the tools' definitions take."""
+    chars = sum(len(t.name) + len(t.description) + len(json.dumps(t.parameters))
+                for t in tools.values())
+    return round(chars / tokens.CHARS_PER_TOKEN)
 
 
 PROMPT = """
 
 # MCP tools
 
-These servers' tools are not loaded yet: you see only the servers. Before calling one of their
-tools, load it with `tool_search` (keywords, or `select:<exact name>`); it can be called from
-the next step on.
+Tools from MCP servers, listed by server; their full names are mcp__<server>__<tool>. They are
+not loaded yet: before calling one, load it with `tool_search` (`select:<full name>`, or
+keywords); it can be called from the next step on.
 {lines}"""
 
 SERVER_LINE_MAX = 200   # characters of a server's own instructions shown in the listing
 
 
+def about(s: Server) -> str:
+    """The first line of what the server says about itself."""
+    return s.instructions.splitlines()[0][:SERVER_LINE_MAX] if s.instructions else ""
+
+
+def names(s: Server, tools: dict[str, Tool]) -> list[str]:
+    """The server's tools, without the mcp__<server>__ every one of them starts with."""
+    prefix = tool_name(s.name, "")
+    return [n[len(prefix):] if n.startswith(prefix) else n
+            for n, t in tools.items() if isinstance(t, MCPTool) and t.server is s]
+
+
+def listing(name: str, about: str, names: list[str], mark: str = "-") -> str:
+    """One server in the listing: its name and what it says about itself, then its tools."""
+    return (f"{mark} {name}" + (f": {about}" if about else "")
+            + "\n  " + (", ".join(names) or "(no tools)"))
+
+
 def prompt_section(c: Connected | None) -> str:
-    """The servers whose tools are deferred, with how many tools each has."""
+    """The servers whose tools are deferred, and those tools' names (the definitions come with
+    tool_search). Tools shown from the start need no listing."""
     if c is None:
         return ""
-    lines = []
-    for s in c.servers:
-        n = sum(1 for t in c.tools.values() if isinstance(t, MCPTool) and t.server is s)
-        if not n:
-            continue
-        about = s.instructions.splitlines()[0][:SERVER_LINE_MAX] if s.instructions else ""
-        lines.append(f"- {s.name} ({n} tool{'s' if n != 1 else ''})" + (f": {about}" if about else ""))
+    deferred = {n: t for n, t in c.tools.items() if t.deferred}
+    lines = [listing(s.name, about(s), n) for s in c.servers if (n := names(s, deferred))]
     return PROMPT.format(lines="\n".join(lines)) if lines else ""
 
 

@@ -144,7 +144,8 @@ class Memories(Check):
 class Servers(Check):
     """MCP servers added to or removed from mcp.json, and ones that failed. Their tools join
     this session's as deferred ones, so the tools sent don't change (the cache holds) until the
-    model loads them with tool_search: what Claude Code does with servers that connect late."""
+    model loads them with tool_search: what Claude Code does with servers that connect late.
+    The note lists their names."""
 
     def __init__(self, tools: dict[str, Tool]):
         self.tools = tools   # the agent's own dict: kept in step with the running servers
@@ -163,21 +164,17 @@ class Servers(Check):
                   if isinstance(t, mcp.MCPTool) and running.get(n) is not t]:
             del self.tools[n]
         self.tools.update({n: t for n, t in running.items() if n not in self.tools})
-        out = {}
-        for s in servers:
-            n = sum(1 for t in running.values() if isinstance(t, mcp.MCPTool) and t.server is s)
-            about = s.instructions.splitlines()[0][:mcp.SERVER_LINE_MAX] if s.instructions else ""
-            out[s.name] = [f"{n} tool{'s' if n != 1 else ''}", about]
+        out = {s.name: ["up", mcp.about(s), *mcp.names(s, running)] for s in servers}
         out.update({name: ["failed", why] for name, why in errors.items()})
         return out
 
     def note(self, before: dict[str, list[str]], now: dict[str, list[str]]) -> str:
-        lines = [f"✗ {n} failed: {about}" if count == "failed" else
-                 f"+ {n} ({count})" + (f": {about}" if about else "")
-                 for n, (count, about) in now.items() if before.get(n) != [count, about]]
+        lines = [f"✗ {n} failed: {v[1]}" if v[0] == "failed" else mcp.listing(n, v[1], v[2:], "+")
+                 for n, v in now.items() if before.get(n) != v]
         lines += [f"- {n} (removed)" for n in before if n not in now]
-        return ("MCP servers changed since this session started (load a server's tools with "
-                "`tool_search`):\n" + clip(lines))
+        return ("MCP servers changed since this session started (full tool names: "
+                "mcp__<server>__<tool>; load one with `tool_search`):\n"
+                + clip(lines))
 
 
 class Files(Check):

@@ -15,7 +15,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from tarjuman import Message
+from tarjuman import Message, added_tools
 
 
 def sessions_dir() -> Path:
@@ -34,7 +34,7 @@ class Kind(StrEnum):
     ERROR = "error"                # a failed request or an internal error; never sent
     TURN_END = "turn_end"          # why a turn stopped, its steps and usage
     REWIND = "rewind"              # the user went back: later events continue from its parent
-    TOOLS_LOADED = "tools_loaded"  # deferred tools the model loaded (tool_search): sent from now on
+    TOOLS_LOADED = "tools_loaded"  # read only (logs of 2026-10-28): loads are now ToolsAdded messages
 
 
 @dataclass
@@ -69,7 +69,9 @@ class _Branch:
 
     def add(self, e: Event) -> None:
         if e.type == Kind.MESSAGE:
-            self.messages.append(Message.from_dict(e.data))
+            m = Message.from_dict(e.data)
+            self.messages.append(m)
+            self.loaded += [n for n in added_tools([m]) if n not in self.loaded]
         elif e.type == Kind.MASK:
             self.masked.update(e.data["entries"])
             self.mask_points.append(len(self.messages))

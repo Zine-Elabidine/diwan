@@ -57,13 +57,13 @@ class Tool:
     readonly: bool = False           # runs without approval inside the project
     auto: bool = False               # changes things, but is confined: runs without approval
     path_arg: str | None = None      # the argument holding a path, checked by the path policy
-    deferred: bool = False           # left out of requests until tool_search loads it
+    deferred: bool = False           # hidden from the model until tool_search loads it
     run: Callable[..., str]
 
     @property
     def definition(self) -> tarjuman.Tool:
         """What the model is told about it."""
-        return tarjuman.Tool(self.name, self.description, self.parameters)
+        return tarjuman.Tool(self.name, self.description, self.parameters, deferred=self.deferred)
 
 
 def schema(props: dict[str, Any], required: list[str]) -> dict[str, Any]:

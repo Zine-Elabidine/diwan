@@ -155,16 +155,23 @@ format other agents use:
 }}
 ```
 
-Their tools appear as `mcp__<server>__<tool>`, loaded on demand: the prompt lists only the
-servers (with their tool counts), and the model loads the tools it needs with `tool_search`
-(keywords, or `select:<name>`), so fifty tools cost nothing until one is used. Every call asks
-for approval (server hints
-aren't trusted), and Esc cancels a running call. A server that fails to start is reported and
-the session goes on; `/mcp` lists servers and tools. The file is followed during the session:
-a server added to it starts (and the model is told, before its next step), a removed one stops,
-and `/mcp reload` reads it again at once. A server whose process ended starts again on the next
-call to one of its tools. Only this user-level file is read: a
-project's file would let any cloned repository start programs.
+Their tools appear as `mcp__<server>__<tool>`. When their definitions are small (under about
+10k tokens) they are sent from the start. Above that they are loaded on demand: the prompt
+lists each server with its tools' names only, and the model loads the definitions it needs
+with `tool_search` (`select:<name>`, or keywords). On Claude models that take mid-conversation
+tool changes (Opus 5 and 4.8, Sonnet 5.5, Fable), every tool is sent from the start, hidden
+until loaded, and a load is a note at the end of the conversation: the prompt cache holds (on
+Sonnet 5.5, the request after a load read all 7.2k earlier tokens from the cache). On other
+providers a loaded tool joins the tool list, which costs one cache miss per load. Every call
+asks for approval (server hints aren't trusted), and Esc cancels a running call.
+
+A server that fails to start is reported and the session goes on; `/mcp` lists servers and
+tools. The file is followed during the session: a server added to it starts (and the model is
+told, with its tools' names, before its next step), a removed one stops, and `/mcp reload`
+reads it again at once. A server whose process has ended starts again before the next call to
+one of its tools; one that stops *during* a call starts again too, but the call isn't sent
+twice (it may have run). Only this user-level file is read: a project's file would let any
+cloned repository start programs.
 
 ## Skills
 

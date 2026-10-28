@@ -34,7 +34,7 @@ def setup(tmp_path, monkeypatch, replies=3):
 
 
 def reminders(agent):
-    return [m.text for m in agent.log.messages() if m.role == "system"]
+    return [m.text for m in agent.log.messages() if m.role == "system" and m.text]
 
 
 def test_a_skill_added_mid_session_is_told_once_and_can_be_loaded(tmp_path, monkeypatch):
@@ -124,6 +124,7 @@ def mcp_session(tmp_path, monkeypatch, script):
     monkeypatch.setattr(mcp, "current", c)
     tools = {**default_tools(), "tool_search": ToolSearch()}
     agent = Agent(Fake(script), "m", Log.new(cwd=str(tmp_path)), tools, "sys",
+                  approve=lambda c, t, o: True,
                   watch=Watch(tmp_path, None, tools=tools, home=tmp_path / "home"))
 
     def write(servers):
@@ -152,7 +153,10 @@ def test_a_server_added_mid_session_comes_deferred_and_is_told(tmp_path, monkeyp
         assert [d.name for d in agent.definitions()] == before   # the tools sent: unchanged
         agent.turn("use echo")
         [note] = reminders(agent)
-        assert "+ test (3 tools)\n" in note and "✗ broken failed: can't start" in note
+        assert "+ test\n  echo, fail, slow" in note and "✗ broken failed: can't start" in note
+        defs = agent.definitions()
+        assert [d.name for d in defs][:len(before)] == before            # added at the end,
+        assert all(d.deferred for d in defs[len(before):])               # hidden till loaded
         assert "echo: hi" in agent.log.messages()[-2].content[0].content[0].text
     finally:
         c.close()
@@ -182,6 +186,45 @@ def test_a_server_that_stopped_starts_again_on_its_next_call(tmp_path, monkeypat
         echo.server._transport.proc.kill()
         echo.server._transport.proc.wait()
         assert echo.run(ToolContext(PathPolicy(tmp_path)), text="back") == "echo: back"
+    finally:
+        c.close()
+
+
+def test_a_call_cut_off_by_the_server_stopping_is_not_sent_again(tmp_path, monkeypatch):
+    from diwan import mcp
+    _, c, write, spec = mcp_session(tmp_path, monkeypatch, [])
+    try:
+        write({"test": spec})
+        echo = c.tools["mcp__test__echo"]
+        sent = []
+        real = echo.server.request
+
+        def request(method, params=None, *a, **k):    # the server dies while handling the call
+            if method == "tools/call":
+                sent.append(params)
+                echo.server._transport.proc.kill()
+                echo.server._transport.proc.wait()
+                raise mcp.MCPError("connection closed")
+            return real(method, params, *a, **k)
+
+        monkeypatch.setattr(echo.server, "request", request)
+        with pytest.raises(ToolError, match="may or may not have run"):
+            echo.run(ToolContext(PathPolicy(tmp_path)), text="once")
+        assert len(sent) == 1                          # not sent twice
+        assert not echo.server.stopped()               # but the server is back for the next one
+    finally:
+        c.close()
+
+
+def test_a_removed_server_is_not_started_again(tmp_path, monkeypatch):
+    _, c, write, spec = mcp_session(tmp_path, monkeypatch, [])
+    try:
+        write({"test": spec})
+        echo = c.tools["mcp__test__echo"]
+        write({})                                      # removed (and stopped) mid-session
+        with pytest.raises(ToolError, match=r"removed from mcp\.json"):
+            echo.run(ToolContext(PathPolicy(tmp_path)), text="hi")
+        assert echo.server.stopped()
     finally:
         c.close()
 
@@ -234,3 +277,24 @@ def test_a_deleted_file_is_told(tmp_path):
     (tmp_path / "app.py").unlink()
     agent.turn("go on")
     assert reminders(agent)[0].endswith("app.py: deleted")
+
+
+def test_few_tools_at_the_start_are_shown_many_are_deferred(tmp_path, monkeypatch):
+    import sys
+    from pathlib import Path
+
+    from diwan import mcp
+    spec = {"command": sys.executable, "args": [str(Path(__file__).parent / "fixtures" / "mcp_server.py")]}
+    c = mcp.connect({"test": spec})
+    try:
+        assert not any(t.deferred for t in c.tools.values())   # three small tools: shown
+        assert mcp.prompt_section(c) == ""                      # nothing to list
+    finally:
+        c.close()
+    monkeypatch.setattr(mcp, "DEFER_ABOVE", 0)
+    c = mcp.connect({"test": spec})
+    try:
+        assert all(t.deferred for t in c.tools.values())
+        assert "- test\n  echo, fail, slow" in mcp.prompt_section(c)
+    finally:
+        c.close()

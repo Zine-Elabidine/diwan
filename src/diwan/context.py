@@ -9,7 +9,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from tarjuman import Cancel, Message, Provider, Request, TarjumanError, Tool, Usage, errors, tokens
+from tarjuman import (Cancel, Message, Provider, Request, TarjumanError, Tool, ToolsAdded, Usage,
+                      added_tools, errors, tokens)
 
 from . import clearing, summary
 from .log import Kind, Log
@@ -48,12 +49,16 @@ class ContextManager:
     def view(self) -> list[Message]:
         """The conversation as the model sees it: the log's messages, with cleared outputs.
         After a summary, its text (as stored, as a user message) replaces the first `cut`
-        messages; message `cut` onward is sent as before."""
+        messages; message `cut` onward is sent as before. Tools loaded in the summarized part
+        stay loaded: a ToolsAdded right after the summary says so again."""
         s = self.log.summary()
         if s is None:
             return clearing.apply(self.log.messages(), self.log.masked())
-        rest = self.log.messages()[s.cut:]
-        return [Message.user(s.text), *clearing.apply(rest, self.log.masked())]
+        messages = self.log.messages()
+        rest = messages[s.cut:]
+        loaded = added_tools(messages[:s.cut])
+        return [Message.user(s.text), *([Message("system", [ToolsAdded(loaded)])] if loaded else []),
+                *clearing.apply(rest, self.log.masked())]
 
     def notes(self) -> list[tuple[str, str]]:
         """The model's notes on this branch, oldest first, as (kind, text). Read from the log,
@@ -68,7 +73,7 @@ class ContextManager:
         after a switch) the whole history is estimated."""
         request = [Message.system(system), *self.view()]
         s = self.log.summary()
-        offset = 2 - s.cut if s else 1   # log message k is request[k + offset]
+        offset = len(request) - len(self.log.messages())   # log message k is request[k + offset]
         used, exact, ratio, borrowed = None, False, tokens.CHARS_PER_TOKEN, None
         for i in range(len(request) - 1, 0, -1):
             m = request[i]
