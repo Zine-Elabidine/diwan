@@ -161,8 +161,10 @@ lists each server with its tools' names only, and the model loads the definition
 with `tool_search` (`select:<name>`, or keywords). On Claude models that take mid-conversation
 tool changes (Opus 5 and 4.8, Sonnet 5.5, Fable), every tool is sent from the start, hidden
 until loaded, and a load is a note at the end of the conversation: the prompt cache holds (on
-Sonnet 5.5, the request after a load read all 7.2k earlier tokens from the cache). On other
-providers a loaded tool joins the tool list, which costs one cache miss per load. Every call
+Sonnet 5.5, the request after a load read all 7.2k earlier tokens from the cache). A server
+added mid-session costs one cache miss there, when it arrives (its hidden tools join the list),
+and nothing when they are loaded. On other providers a loaded tool joins the tool list, which
+costs one cache miss per load. Every call
 asks for approval (server hints aren't trusted), and Esc cancels a running call.
 
 A server that fails to start is reported and the session goes on; `/mcp` lists servers and
