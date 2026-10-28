@@ -4,8 +4,9 @@
 
 An agent runtime.
 
-**Status:** v0 works: a terminal coding agent with nine tools (read, grep, glob, write,
-edit, bash, note, recall, agent) plus `memory` and MCP servers' tools, approvals, retries, long sessions that never run out of context,
+**Status:** v0 works: a terminal coding agent with eleven tools (read, grep, glob, write,
+edit, bash, note, recall, agent, skill, memory) plus MCP servers' tools loaded on demand,
+approvals, retries, long sessions that never run out of context,
 and a tree-shaped JSONL log of every session in `~/.diwan/sessions/`.
 One conversation can move between models and providers mid-session
 (`/model anthropic:claude-sonnet-5-5`, then `/model openrouter:deepseek/deepseek-v4-flash`):
@@ -152,7 +153,10 @@ format other agents use:
 }}
 ```
 
-Their tools appear as `mcp__<server>__<tool>`; every call asks for approval (server hints
+Their tools appear as `mcp__<server>__<tool>`, loaded on demand: the prompt lists only the
+servers (with their tool counts), and the model loads the tools it needs with `tool_search`
+(keywords, or `select:<name>`), so fifty tools cost nothing until one is used. Every call asks
+for approval (server hints
 aren't trusted), and Esc cancels a running call. A server that fails to start is reported and
 the session goes on; `/mcp` lists servers and tools. Only this user-level file is read: a
 project's file would let any cloned repository start programs.
@@ -162,19 +166,23 @@ project's file would let any cloned repository start programs.
 A skill is a folder with a `SKILL.md` whose front matter has a `name` and a `description`,
 the format Claude Code uses, so existing skills work as they are. Diwan looks in
 `.diwan/skills` and `.claude/skills`, in the project and then the home folder. Only the names
-and descriptions go into the prompt; the model reads a skill's files (without asking) when a
-task matches it. `/skills` lists them.
+and descriptions go into the prompt; when a task matches, the model loads the skill with the
+`skill` tool and reads the files it points to (without asking). `/skills` lists them.
 
 ## Memory
 
-Memory across sessions and machines comes from [Telepathy](https://github.com/Zine-Elabidine/telepathy):
-memory bundles in a private git repo, chosen per project per machine (`tp use personal
-my-project`). At the start, Diwan runs `tp session start`: the memory index goes into the
-system prompt once (a frozen snapshot, so the prompt cache holds), and the bundle folders can
-be read without approval. The `memory` tool saves a new memory into the right bundle (user and
-feedback memories in the personal one, project and reference ones in the project's). At exit,
-`tp session end` indexes, commits and pushes them. Without `tp`, or with `--no-memory`, there
-is no memory; `/memory` shows what is loaded.
+Each project has a memory folder, `~/.diwan/memory/<project>/`: one file per memory and a
+`MEMORY.md` index, which the `memory` tool keeps up to date as it saves. The index goes into
+the system prompt at the start (once, so the prompt cache holds); the model reads a memory
+file, without approval, when it looks relevant, and saves what a later session needs (who the
+user is and how they like to work, the project's goals and decisions, where things are).
+
+With [Telepathy](https://github.com/Zine-Elabidine/telepathy) installed, memory follows you
+across machines instead: memory bundles in a private git repo, chosen per project per machine
+(`tp use personal my-project`). Diwan runs `tp session start` to load them, saves user and
+feedback memories into the personal bundle and the rest into the project's, and runs
+`tp session end` at exit to index, commit and push. A project with no bundles on this machine
+uses its own folder as above. `--no-memory` turns memory off; `/memory` shows what is loaded.
 
 ## Child agents
 

@@ -21,7 +21,7 @@ from .models import DEFAULT_MODELS, Ref, Router
 from .paths import PathPolicy
 from .prompt import system_prompt
 from .session import Approvals, Session
-from .tools import Tool, ToolSearch, default_tools
+from .tools import Skill, Tool, ToolSearch, default_tools
 from .ui import Terminal
 
 KEYS = "Ctrl-D quits. Ctrl-C stops the agent mid-turn."
@@ -52,6 +52,7 @@ def build_agent(ref: Ref, log: Log, on: Callable[[UIEvent], None],
                                       *skills.readable(skills.current)])
     tools = {**default_tools(sandbox.current), **({"memory": memory.Remember()} if mem else {}),
              **(mcp.current.tools if mcp.current else {})}
+    tools["skill"] = Skill()   # always: a skill added mid-session can be loaded too
     if any(t.deferred for t in tools.values()):
         tools["tool_search"] = ToolSearch()
     extra = (skills.prompt_section(skills.current) + (memory.prompt_section(mem) if mem else "")
@@ -81,7 +82,7 @@ def start_memory(cwd: Path, out: TextIO) -> None:
     memory.current, message = memory.start(cwd)
     if message:
         print(message, file=out)
-    if memory.current is not None:
+    if memory.current is not None and not memory.current.native:
         atexit.register(memory.end, cwd)
 
 

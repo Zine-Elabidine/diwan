@@ -10,6 +10,7 @@ from .notes import Note
 from .recall import Recall
 from .search import Glob, Grep
 from .shell import Bash, find_shell
+from .skill import Skill
 from .toolsearch import ToolSearch
 
 
@@ -20,5 +21,5 @@ def default_tools(sandbox: Sandbox | None = None) -> dict[str, Tool]:
                                 Recall(), Agent())}
 
 
-__all__ = ["Agent", "Bash", "Edit", "Glob", "Grep", "Note", "Read", "Recall", "Tool", "ToolContext",
+__all__ = ["Agent", "Bash", "Edit", "Glob", "Grep", "Note", "Read", "Recall", "Skill", "Tool", "ToolContext",
            "ToolError", "ToolSearch", "Write", "access", "default_tools", "find_shell"]

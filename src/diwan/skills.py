@@ -2,9 +2,9 @@
 "plain files" way). A skill is a folder with a SKILL.md that starts with a `name` and a
 `description`, the format Claude Code uses, so its skills work here as they are.
 
-Only the names and descriptions go into the system prompt (once, at the start). The model
-reads a skill's SKILL.md, and any file it points to, when a task matches: a hundred skills
-cost a few lines each until one is needed."""
+Only the names and descriptions go into the system prompt (once, at the start). When a task
+matches, the model loads a skill with the `skill` tool (tools/skill.py) and reads any file it
+points to: a hundred skills cost a few lines each until one is needed."""
 
 from __future__ import annotations
 
@@ -67,6 +67,13 @@ def read(path: Path) -> Skill | None:
     return Skill(name, description, path)
 
 
+def body(skill: Skill) -> str:
+    """SKILL.md without its front matter: the instructions themselves."""
+    text = skill.path.read_text(encoding="utf-8")
+    m = re.match(r"---\s*\n.*?\n---\s*\n?", text, re.S)
+    return text[m.end():].strip() if m else text.strip()
+
+
 def readable(skills: list[Skill]) -> list[Path]:
     """The skill folders, which the model may read without asking."""
     return [s.path.parent for s in skills]
@@ -76,16 +83,15 @@ PROMPT = """
 
 # Skills
 
-Instructions for particular kinds of task, in files. When a task matches a skill, read its
-SKILL.md before starting, and follow it; read the other files it points to when it says so.
+Instructions for particular kinds of task. When a task matches a skill, load it with the
+`skill` tool before starting, and follow it; read the other files it points to when it says so.
 {lines}"""
 
 
 def prompt_section(skills: list[Skill]) -> str:
     if not skills:
         return ""
-    return PROMPT.format(lines="\n".join(f"- {s.name}: {s.description} ({s.path})"
-                                         for s in skills))
+    return PROMPT.format(lines="\n".join(f"- {s.name}: {s.description}" for s in skills))
 
 
 def describe(skills: list[Skill]) -> str:

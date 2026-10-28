@@ -1,13 +1,17 @@
-"""Memory across sessions and machines, kept by Telepathy (docs/design-decisions.md §13).
+"""Memory across sessions: a folder of memory files per project, with a MEMORY.md index
+(docs/design-decisions.md §13).
 
-At the start, `tp session start` pulls the user's memory store and says where this project's
-memory folder is, with its index. The index goes into the system prompt once, as it was at
-the start (a frozen snapshot: the prompt never changes mid-session, so the cache holds). The
-model reads memory files with the usual tools (no approval needed there) and saves new ones
-with the `memory` tool, which writes the file into the right bundle. At the end,
-`tp session end` files them, rebuilds the indexes, commits, and pushes in the background.
+Two backends, the same for the model:
+- native (the default): ~/.diwan/memory/<project>/, one file per memory and MEMORY.md, which
+  the `memory` tool keeps up to date on every save.
+- Telepathy, when `tp` is installed and the project loads bundles on this machine:
+  `tp session start` pulls the store and says where the project's folder is (bundle links and
+  MEMORY.md); `tp session end` files the new memories, rebuilds the indexes, commits and
+  pushes, so memory follows the user across machines.
 
-Without `tp`, or for a project that loads no bundles on this machine, there is no memory."""
+The index goes into the system prompt once, as it was at the start (a frozen snapshot: the
+prompt never changes mid-session, so the cache holds). The model reads memory files with the
+usual tools (no approval needed there) and saves new ones with the `memory` tool."""
 
 from __future__ import annotations
 
@@ -15,9 +19,11 @@ import json
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 
+from .log import sessions_dir
 from .tools.base import Tool, ToolContext, ToolError, schema
 
 TIMEOUT = 30        # seconds for `tp session start|end` (a pull over the network)
@@ -27,11 +33,13 @@ PERSONAL_TYPES = ("user", "feedback")   # these go to the personal bundle, the r
 
 @dataclass
 class Memory:
-    folder: Path            # ~/.telepathy/sessions/<project>: one link per bundle, and MEMORY.md
+    folder: Path            # Telepathy: ~/.telepathy/sessions/<project> (bundle links + MEMORY.md);
+                            # native: ~/.diwan/memory/<project> (the files + MEMORY.md)
     index: str              # MEMORY.md as it was at the start
-    bundles: list[str]
-    write: str              # the bundle for project and reference memories
-    personal: str | None    # the bundle for user and feedback memories
+    bundles: list[str] = field(default_factory=list)
+    write: str = ""         # the bundle for project and reference memories ("" = the folder)
+    personal: str | None = None   # the bundle for user and feedback memories
+    native: bool = False    # Diwan keeps MEMORY.md itself (no Telepathy)
 
     def bundle_for(self, kind: str) -> str:
         return self.personal if kind in PERSONAL_TYPES and self.personal else self.write
@@ -47,11 +55,24 @@ class Memory:
 current: Memory | None = None
 
 
+def native_folder(cwd: Path) -> Path:
+    """~/.diwan/memory/<the project's path, as one name>, as Claude Code names its folders."""
+    return sessions_dir().parent / "memory" / re.sub(r"[^A-Za-z0-9]", "-", str(cwd.resolve()))
+
+
+def native(cwd: Path) -> Memory:
+    folder = native_folder(cwd)
+    index = folder / "MEMORY.md"
+    return Memory(folder, index.read_text(encoding="utf-8") if index.exists() else "",
+                  native=True)
+
+
 def start(cwd: Path) -> tuple[Memory | None, str]:
-    """This project's memory, and a message for the user (why there is none, or "")."""
+    """This project's memory, and a message for the user ("" when all is well): Telepathy's
+    when `tp` is installed and the project loads bundles here, else Diwan's own."""
     tp = shutil.which("tp")
     if tp is None:
-        return None, ""
+        return native(cwd), ""
     try:
         r = subprocess.run([tp, "session", "start", "--cwd", str(cwd)], capture_output=True,
                            text=True, encoding="utf-8", timeout=TIMEOUT, check=False)
@@ -59,7 +80,7 @@ def start(cwd: Path) -> tuple[Memory | None, str]:
     except (OSError, ValueError, subprocess.TimeoutExpired) as e:
         return None, f"memory: tp session start failed ({type(e).__name__})"
     if not data.get("folder"):
-        return None, data.get("message") or ""
+        return native(cwd), ""
     return Memory(Path(data["folder"]), data.get("index") or "", list(data.get("bundles") or []),
                   data.get("write") or "", data.get("personal")), ""
 
@@ -81,7 +102,7 @@ PROMPT = """
 
 # Memory
 
-You have a memory that lasts across sessions and machines, in {folder}. Its index, as it was
+You have a memory that lasts across sessions{machines}, in {folder}. Its index, as it was
 when this session started:
 
 {index}
@@ -95,7 +116,8 @@ under a name that exists replaces that memory: update it rather than adding a ne
 
 
 def prompt_section(m: Memory) -> str:
-    return PROMPT.format(folder=m.folder, index=m.index.strip())
+    return PROMPT.format(folder=m.folder, index=m.index.strip() or "(empty: nothing saved yet)",
+                         machines="" if m.native else " and machines")
 
 
 class Remember(Tool):
@@ -113,7 +135,7 @@ class Remember(Tool):
     def run(self, ctx: ToolContext, name: str, type: str, description: str, text: str) -> str:
         m = current
         if m is None:
-            raise ToolError("no memory for this project (Telepathy is not set up here)")
+            raise ToolError("there is no memory in this session")
         if type not in TYPES:
             raise ToolError(f"type must be one of {', '.join(TYPES)}")
         if not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", name) or len(name) > 60:
@@ -123,19 +145,41 @@ class Remember(Tool):
         bundle = m.bundle_for(type)
         stem = name if name.startswith(f"{type}_") else f"{type}_{name}"
         path = m.folder / bundle / f"{stem}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
         existed = path.exists()
         one_line = " ".join(description.split())
         path.write_text(f"---\nname: {name}\ndescription: {json.dumps(one_line, ensure_ascii=False)}\n"
                         f"metadata:\n  type: {type}\n---\n\n{text.strip()}\n",
                         encoding="utf-8", newline="\n")
-        return f"{'Updated' if existed else 'Saved'} {bundle}/{path.name}"
+        if m.native:   # Telepathy rebuilds its indexes at the end; here the index is ours
+            index_line(m.folder / "MEMORY.md", path.name, name, one_line)
+        return f"{'Updated' if existed else 'Saved'} {f'{bundle}/' if bundle else ''}{path.name}"
+
+
+_index_lock = threading.Lock()   # sessions in one room can save at the same moment
+
+
+def index_line(index: Path, file: str, name: str, description: str) -> None:
+    """Add a memory's line to MEMORY.md, or replace the line that points to the same file."""
+    line = f"- [{name}]({file}) — {description}"
+    with _index_lock:
+        lines = index.read_text(encoding="utf-8").splitlines() if index.exists() else []
+        at = next((i for i, x in enumerate(lines) if f"]({file})" in x), None)
+        if at is None:
+            lines.append(line)
+        else:
+            lines[at] = line
+        index.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
 def describe(m: Memory | None) -> str:
     """For /memory."""
     if m is None:
-        return ("No memory for this project. With Telepathy (`tp`), run `tp use <bundles>` in "
-                "this folder to choose what it loads.")
+        return "No memory in this session (--no-memory, or Telepathy failed to start)."
+    if m.native:
+        count = sum(1 for f in m.folder.glob("*.md") if f.name != "MEMORY.md")
+        return (f"Memory: {m.folder} ({count} memories), on this machine. With Telepathy (`tp`), "
+                "`tp use <bundles>` in this folder keeps memory in git, across machines.")
     count = sum(1 for b in m.bundles for _ in (m.folder / b).glob("*.md")
                 if _.name != "MEMORY.md")
     return (f"Memory: {m.folder}\nbundles: {', '.join(m.bundles)} ({count} memories); new "

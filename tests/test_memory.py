@@ -1,5 +1,6 @@
-"""Memory through Telepathy: the index loaded at the start, files read without asking, new
-memories saved into the right bundle, `tp session end` at the end. `tp` is faked here."""
+"""Memory: Diwan's own folder by default; through Telepathy when `tp` is installed (faked
+here): the index loaded at the start, files read without asking, new memories saved into the
+right place, `tp session end` at the end."""
 
 import json
 import os
@@ -79,6 +80,34 @@ def test_the_end_hands_back_to_telepathy(store, tmp_path):
                                               f"session end --cwd {tmp_path / 'proj'}"]
 
 
-def test_no_tp_means_no_memory(tmp_path, monkeypatch):
+def test_without_tp_memory_is_diwans_own_folder(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path))
-    assert memory.start(tmp_path) == (None, "")
+    project = tmp_path / "my proj"
+    m, message = memory.start(project)
+    assert m is not None and m.native and message == ""
+    assert m.folder.parent == tmp_path / "home" / "memory" and m.folder.name.endswith("-my-proj")
+    assert "(empty: nothing saved yet)" in memory.prompt_section(m)
+    assert "machines" not in memory.prompt_section(m)   # only Telepathy syncs across machines
+
+    monkeypatch.setattr(memory, "current", m)
+    tool, ctx = memory.Remember(), ToolContext(PathPolicy(project))
+    assert tool.run(ctx, name="likes-tabs", type="user", description="Prefers tabs",
+                    text="Tabs.") == "Saved user_likes-tabs.md"
+    tool.run(ctx, name="db", type="project", description="Postgres 17", text="17")
+    tool.run(ctx, name="db", type="project", description="Postgres 18", text="18")   # replaces
+    assert (m.folder / "MEMORY.md").read_text().splitlines() == [
+        "- [likes-tabs](user_likes-tabs.md) — Prefers tabs",
+        "- [db](project_db.md) — Postgres 18"]
+    assert "Postgres 18" in memory.prompt_section(memory.start(project)[0])   # the next session
+    assert PathPolicy(project, readable=m.readable()).check(
+        str(m.folder / "project_db.md"), write=False) is Access.INSIDE
+
+
+def test_tp_without_bundles_here_falls_back_to_diwans_own(tmp_path, monkeypatch):
+    tp = tmp_path / "bin" / "tp"
+    tp.parent.mkdir()
+    tp.write_text("#!/bin/sh\necho '{\"message\": \"no bundles\"}'\n")
+    tp.chmod(tp.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", str(tp.parent))
+    m, _ = memory.start(tmp_path / "p")
+    assert m is not None and m.native

@@ -1,7 +1,10 @@
-"""Skills: folders with a SKILL.md; names and descriptions in the prompt, files read on demand."""
+"""Skills: folders with a SKILL.md; names and descriptions in the prompt, loaded on demand."""
+
+import pytest
 
 from diwan import skills
 from diwan.paths import Access, PathPolicy
+from diwan.tools import Skill, ToolContext, ToolError
 
 
 def skill(folder, name, description="Does a thing.", body="Step 1."):
@@ -22,7 +25,8 @@ def test_found_in_the_project_first_then_home(tmp_path):
     assert found[0].description == "Project deploy steps."
     assert len(found[1].description) <= skills.DESCRIPTION_MAX + 3
     text = skills.prompt_section(found)
-    assert "- deploy: Project deploy steps." in text and str(found[0].path) in text
+    assert "- deploy: Project deploy steps." in text and "`skill` tool" in text
+    assert str(found[0].path) not in text   # the tool finds the file: no paths in the prompt
     assert skills.prompt_section([]) == ""
 
 
@@ -35,3 +39,14 @@ def test_skill_files_are_read_without_asking_even_in_dot_diwan(tmp_path):
     assert policy.check(str(found[0].path), write=False) is Access.INSIDE
     assert policy.check(str(found[0].path), write=True) is Access.DENIED     # never written
     assert policy.check(str(home / ".diwan" / "env"), write=False) is Access.DENIED
+
+
+def test_the_skill_tool_returns_the_instructions_and_the_folder(tmp_path, monkeypatch):
+    skill(tmp_path / "s" / "deploy", "deploy", body="1. Build.\n2. Ship.")
+    monkeypatch.setattr(skills, "current", [skills.read(tmp_path / "s" / "deploy" / "SKILL.md")])
+    ctx = ToolContext(paths=None)
+    out = Skill().run(ctx, "deploy")
+    assert out.endswith("1. Build.\n2. Ship.") and "name:" not in out   # no front matter
+    assert str(tmp_path / "s" / "deploy") in out
+    with pytest.raises(ToolError, match="Skills: deploy"):
+        Skill().run(ctx, "nope")
